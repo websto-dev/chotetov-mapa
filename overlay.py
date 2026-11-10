@@ -285,6 +285,12 @@ for st, n, g in zip(_dv.subtype, _dv.names, _dv.geometry):
     for naz in [MESTO['nazev']] + [o['nazev'] for o in OBCE if o.get('nazev')]:
         nm = nm.replace(naz + '-', '')
     districts.append({'name': nm, 'xy': list(px(rp.x, rp.y, gz(rp.x, rp.y))[:2]), 'a': round(gg.area / 1e6, 2)})
+# ruční popisky (vesnice a osady, které Overture nemá jako čtvrť): mesto.json "popisky": [{"nazev", "lat", "lon", "velky"}]
+OFF = (0.0, 0.0)
+for p in MESTO.get('popisky', []):
+    lx, ly = to_local(p['lon'], p['lat'])
+    if chunk_of(lx, ly) not in CKEY: continue
+    districts.append({'name': p['nazev'], 'xy': list(px(lx, ly, gz(lx, ly))[:2]), 'a': 5.0 if p.get('velky') else 1.0})
 print('čtvrtí', len(districts))
 # tramvaje: graf kolejí přes všechny čtverce, linky = nejkratší cesta mezi konečnými (TRAM_LINES), tam a zpět
 OFF = (0.0, 0.0)

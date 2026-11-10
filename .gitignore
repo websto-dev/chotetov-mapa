@@ -17,8 +17,8 @@ assets/strechy_orto.json
 assets/hrebeny.json
 
 # konfigurace tvého města (python novy_mesto.py); ukázka je v priklady/mesto.json
-/mesto.json
-/mista.json
+# /mesto.json (v tomhle repu se nastavení Chotětova verzuje)
+# /mista.json
 /obce/
 
 # vlastní úpravy konkrétního města (ukázky jsou v priklady/)
@@ -50,3 +50,6 @@ output/
 hlaseni/wrangler.jsonc
 wrangler.toml
 !hlaseni/migrations/*.sql
+
+# lokální nastavení Claude Code
+.claude/

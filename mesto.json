@@ -1,0 +1,56 @@
+{
+ "nazev": "Chotětov",
+ "titulek": "Izometrický Chotětov a Hřivno",
+ "h1": [
+  "Izometrický",
+  "Chotětov a Hřivno"
+ ],
+ "podtitul": "Chotětov a Hřivno z otevřených dat, ve stylu SimCity 2000.",
+ "popis": "Izometrická pixel-art mapa obce Chotětov s Hřivnem ve stylu SimCity 2000. Roční období, den a noc, počasí a příběhy míst.",
+ "url": "https://chotetov.websto.cz",
+ "stred": [14.807758, 50.344989],
+ "polovina": 1150.0,
+ "ctverce": [
+  [-1, 0],
+  [0, 0],
+  [-2, -1],
+  [-1, -1],
+  [0, -1]
+ ],
+ "href": 241.5,
+ "dno": -61,
+ "mhd": {
+  "gtfs": "https://data.pid.cz/PID_GTFS.zip",
+  "zdroj": "Pražská integrovaná doprava (ROPID)",
+  "zdroj_url": "https://pid.cz/o-systemu/opendata/"
+ },
+ "vanocni_strom": null,
+ "potoky": true,
+ "letadla": true,
+ "pocasi": true,
+ "vitr": true,
+ "popisky": [
+  {
+   "nazev": "Chotětov",
+   "lat": 50.337433,
+   "lon": 14.801516,
+   "velky": true
+  },
+  {
+   "nazev": "Hřivno",
+   "lat": 50.323251,
+   "lon": 14.768227,
+   "velky": true
+  },
+  {
+   "nazev": "Sušno",
+   "lat": 50.334433,
+   "lon": 14.747541
+  },
+  {
+   "nazev": "Chrástecký dvůr",
+   "lat": 50.316246,
+   "lon": 14.782849
+  }
+ ]
+}
