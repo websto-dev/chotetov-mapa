@@ -2318,49 +2318,209 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
   // vrstva s vozidly se kreslí ve stejné chvíli jako dlaždice (událost update-viewport), jinak by při posouvání mapy
   // o snímek zaostávala; když se mapa nehýbe, kreslí ji vlastní smyčka
   let osdT = -1e9, rafLast = performance.now();
-  // ---------- postavičky z mesto.json "postavy": [{"lat", "lon", "typ": "pivo", "text"}] ----------
-  // Stojí na místě a popíjejí; po kliknutí se mapa přiblíží, postavička se zvětší, zamává a řekne svůj text.
+  // ---------- postavičky z mesto.json "postavy": [{"lat", "lon", "typ": "pivo", "text", "nazev", "party": {"dx", "dy"}}] ----------
+  // Stojí na místě a popíjejí; po kliknutí se mapa přiblíží, postavička se zvětší, zamává a v kartě nabídne párty:
+  // z ulice přijdou hosté, točí se pivo ze soudku, na grilu se peče sele, tancuje se a občas někdo odběhne ke keři.
+  // Párty je jen v prohlížeči návštěvníka (nic se neukládá) a polohy jsou v metrech od postavičky (x na východ, y na sever).
   var POSTAVY = { list: ({{POSTAVY}} || []).map((p) => {
     const x = (p.lon - cam.lon0) * cam.kx, y = (p.lat - cam.lat0) * cam.ky, h = gz(x, y);
     const [ix, iy] = toImg(x, y, h);
-    return { ...p, x, y, h, ix, iy, d: depth(x, y, h), wave: -1e9, ph: rnd(Math.round(x * 7 + y)) * 6 };
+    return { ...p, x, y, h, ix, iy, d: depth(x, y, h), wave: -1e9, ph: rnd(Math.round(x * 7 + y)) * 6, party: null };
   }), drawn: [] };
   POSTAVY.hitAt = (mx, my) => POSTAVY.drawn.find((q) => Math.abs(q[0] - mx) < q[3] * 0.6 + 6 && my < q[1] + 6 && my > q[1] - q[3] - 6)?.[2];
-  POSTAVY.click = (p) => { goTo(p.ix, p.iy - 6, 4); p.wave = performance.now(); };
+  const PARTY_LAYOUT = { keg: [-3.5, 1.8], grill: [5, -1.5], speaker: [2.6, 2.4], dance: [0.8, -4.6], bush: [-6.5, -7], street: [0.5, -15],
+                         lights: [[-5.5, 3], [-5.5, -8.5], [7.5, -8.5], [7.5, 3]] };
+  const PAL = { shirt: ['#2f7dc0', '#e3b505', '#3a9a5b', '#8e44ad', '#e67e22', '#ecf0f1', '#d35d8f', '#16a085', '#34495e', '#c0392b'],
+                pants: ['#3b5b8c', '#2c2c34', '#6b4f2a', '#4a4f57', '#1f3d5c', '#7a6a55'],
+                hair: ['#5a3b22', '#1e1a18', '#c9a14a', '#8a4b2a', '#b8b8b8', '#3a2a1e'], skin: ['#e8c6a4', '#d9ad84', '#f0d2b4', '#b98a62'] };
+  const ppick = (a) => a[Math.floor(Math.random() * a.length)];
+  const shade = (hex, f) => '#' + [1, 3, 5].map((i) => Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(i, i + 2), 16) * f))).toString(16).padStart(2, '0')).join('');
+  function partyStart(p) {
+    const L = p.layout = { ...PARTY_LAYOUT, ...(p.party_layout || {}) };
+    const guests = [];
+    for (let i = 0; i < 9; i++) {
+      const skirt = Math.random() < 0.4;
+      guests.push({ look: { shirt: ppick(PAL.shirt), pants: skirt ? ppick(['#c0392b', '#2c3e50', '#8e44ad', '#16a085']) : ppick(PAL.pants), hair: ppick(PAL.hair), skin: ppick(PAL.skin), skirt, long: skirt && Math.random() < 0.7 },
+        x: L.street[0] + (Math.random() - 0.5) * 3, y: L.street[1] - i * 1.6, tx: 0, ty: 0, state: 'arrive', t: 0, wait: i * 1.4, ph: Math.random() * 6, beer: Math.random() < 0.6 });
+      const g = guests[i]; [g.tx, g.ty] = spot(L, 'dance');
+    }
+    p.party = { t0: performance.now(), guests, pig: 0, smoke: [], notes: [] };
+  }
+  function spot(L, kind) {
+    if (kind === 'keg') return [L.keg[0] + 1.1, L.keg[1] - 0.6];
+    if (kind === 'bush') return [L.bush[0] + 0.9, L.bush[1] + 0.4];
+    if (kind === 'chat') return [L.grill[0] - 1.5 + (Math.random() - 0.5) * 3, L.grill[1] - 1.8 + (Math.random() - 0.5) * 2];
+    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 3;
+    return [L.dance[0] + Math.cos(a) * r, L.dance[1] + Math.sin(a) * r * 0.7];
+  }
+  function stepParty(p, dt) {
+    const P = p.party, L = p.layout;
+    P.pig += dt;
+    for (const g of P.guests) {
+      g.t += dt;
+      if (g.wait > 0) { g.wait -= dt; continue; }
+      const dx = g.tx - g.x, dy = g.ty - g.y, dl = Math.hypot(dx, dy);
+      const moving = g.state === 'arrive' || g.state === 'go-keg' || g.state === 'go-bush' || g.state === 'go';
+      if (moving) {
+        const v = g.state === 'go-bush' ? 3.2 : 1.3;
+        if (dl > 0.15) { g.x += dx / dl * Math.min(dl, v * dt); g.y += dy / dl * Math.min(dl, v * dt); g.dir = dx >= 0 ? 1 : -1; continue; }
+        g.state = { 'go-keg': 'tap', 'go-bush': 'vomit', arrive: 'dance', go: g.next }[g.state]; g.t = 0;
+        g.dur = g.state === 'tap' ? 3 : g.state === 'vomit' ? 3.5 : 6 + Math.random() * 10; continue;
+      }
+      if (g.t < g.dur) continue;
+      if (g.state === 'tap') g.beer = true;
+      const r = Math.random();
+      const pt = (now) => performance.now() - P.t0 > now * 1000;
+      if (r < 0.06 && pt(25) && P.guests.every((q) => q.state !== 'vomit' && q.state !== 'go-bush')) { g.state = 'go-bush'; [g.tx, g.ty] = spot(L, 'bush'); g.beer = false; }
+      else if (r < 0.32 && !g.beer || r < 0.12) { g.state = 'go-keg'; [g.tx, g.ty] = spot(L, 'keg'); }
+      else if (r < 0.72) { g.state = 'go'; g.next = 'dance'; [g.tx, g.ty] = spot(L, 'dance'); }
+      else { g.state = 'go'; g.next = 'drink'; [g.tx, g.ty] = spot(L, 'chat'); }
+      g.t = 0;
+    }
+  }
+  // člověk 10 jednotek vysoký (1,8 m), kreslený po pixelech jako lyžaři; pose: stand walk drink dance vomit wave tap
+  function drawPerson(X, Y, u, k, pose, t, o = {}) {
+    const R = (cx, cy, w, hh, c) => { ctx.fillStyle = c; ctx.fillRect(X + cx * u, Y - cy * u, w * u, hh * u); };
+    const dark = o.night > 0.6, D = (c) => dark ? shade(c, 0.62) : c;
+    const SH = D(k.shirt), SH2 = D(shade(k.shirt, 0.78)), PA = D(k.pants), PA2 = D(shade(k.pants, 0.8)), SK = D(k.skin), HA = D(k.hair), OUTC = '#1b2233';
+    const BEER = '#e0a526', FOAM = '#fffbe8';
+    let bob = 0;
+    if (pose === 'dance') bob = Math.sin(t * 9) > 0 ? 1 : 0;
+    const Yb = Y; Y -= bob * u;
+    ctx.fillStyle = 'rgba(20,26,40,0.32)'; ctx.fillRect(X - 3 * u, Yb - Math.max(1, Math.round(u / 2)), 6 * u, Math.max(1, Math.round(u / 2)) + u / 2);
+    if (pose === 'vomit') {                                             // předklon u keře
+      R(-2, 1, 2, 1, OUTC); R(0, 1, 2, 1, OUTC); R(-2, 4, 2, 3, PA); R(0, 4, 2, 3, PA2);
+      R(-1, 7, 4, 3, SH); R(2, 7, 1, 3, SH2); R(2, 8, 2, 2, SK); R(3, 8, 1, 1, HA);
+      R(0, 5, 1, 2, SK);                                               // ruka opřená o koleno
+      const s = Math.floor(t * 8) % 3;
+      if (Math.sin(t * 3) > -0.2) { R(3, 6, 1, 1, '#9bc53d'); R(3 + (s > 0 ? 1 : 0), 5, 1, 1, '#b5d55a'); R(3, 4 - s % 2, 1, 1, '#9bc53d'); }
+      R(2, 1, 3, 1, '#8fb339');                                        // loužička
+      return;
+    }
+    const step = pose === 'walk' ? (Math.sin(t * 10) > 0 ? 1 : -1) : 0;
+    R(-2 + (step > 0 ? -0 : 0), 1, 2, 1, OUTC); R(0, 1, 2, 1, OUTC);
+    if (k.skirt) { R(-2, 5, 4, k.long ? 3 : 2, PA); R(1, 5, 1, k.long ? 3 : 2, PA2); if (!k.long) { R(-1, 3, 1, 2, SK); R(0, 3, 1, 2, SK); } }
+    else if (step) { R(-2, 4, 2, 3 - (step > 0 ? 1 : 0), PA); R(0, 4, 2, 3 - (step < 0 ? 1 : 0), PA2); }
+    else { R(-2, 4, 2, 3, PA); R(0, 4, 2, 3, PA2); }
+    R(-2, 8, 4, 4, SH); R(1, 8, 1, 4, SH2);
+    R(-1, 10, 2, 2, SK); R(-1, 10, 2, 1, HA); if (k.long) R(-2, 10, 1, 3, HA);
+    // ruce
+    const beerAt = (cx, cy) => { R(cx, cy, 2, 2, BEER); R(cx, cy + 1, 2, 1, FOAM); };
+    if (pose === 'wave') { const wig = Math.sin(t * 14) > 0 ? -1 : 0; R(-3, 10, 1, 3, SH); R(-3 + wig, 11, 1, 1, SK); }
+    else if (pose === 'dance') { const up = Math.sin(t * 4.5 + o.ph) > 0; R(-3, up ? 11 : 8, 1, 3, SH); R(-3, up ? 12 : 5, 1, 1, SK); }
+    else { R(-3, 8, 1, 3, SH); R(-3, 5, 1, 1, SK); }
+    if (pose === 'drink') { R(2, 8, 1, 2, SH2); beerAt(1, 9); }
+    else if (pose === 'tap') { R(2, 8, 2, 1, SH2); if (Math.floor(t * 2) % 2) beerAt(3, 7); }
+    else if (pose === 'dance') { const up = Math.sin(t * 4.5 + o.ph + 1.6) > 0; R(2, up ? 11 : 8, 1, 3, SH2); if (o.beer) beerAt(2, up ? 13 : 6); else R(2, up ? 12 : 5, 1, 1, SK); }
+    else { R(2, 8, 1, 3, SH2); if (o.beer) { beerAt(2, 6); R(4, 6, 1, 1, '#c98f1a'); } else R(2, 5, 1, 1, SK); }
+  }
+  function drawProps(p, S, u, now, night, items) {
+    const P = p.party, L = p.layout, t = now / 1000;
+    const box = (X, Y, w, hh, c) => { ctx.fillStyle = c; ctx.fillRect(X, Y, w, hh); };
+    // soudek s pípou
+    items.push({ d: S.d(...L.keg), f: () => {
+      const [X, Y] = S(...L.keg);
+      box(X - 2.5 * u, Y - 5 * u, 5 * u, 5 * u, '#8a5a2b'); box(X + 1.5 * u, Y - 5 * u, u, 5 * u, '#6b4420');
+      box(X - 2.5 * u, Y - 4 * u, 5 * u, u * 0.6, '#444b55'); box(X - 2.5 * u, Y - 1.6 * u, 5 * u, u * 0.6, '#444b55');
+      box(X - 0.5 * u, Y - 7 * u, u, 2 * u, '#c9ccd1'); box(X - 0.5 * u, Y - 7 * u, 2 * u, u, '#c9ccd1');   // pípa
+      if (P.guests.some((g) => g.state === 'tap')) box(X + 1 * u, Y - 6 * u + ((t * 20) % 2) * u, u * 0.5, u * 1.5, '#f0c040');
+    } });
+    // gril s rožněm a seletem
+    items.push({ d: S.d(...L.grill), f: () => {
+      const [X, Y] = S(...L.grill);
+      box(X - 4 * u, Y - 6 * u, u, 6 * u, '#3a3f47'); box(X + 3 * u, Y - 6 * u, u, 6 * u, '#3a3f47');          // stojany
+      const fl = Math.sin(t * 13) > 0;
+      box(X - 3 * u, Y - 1.2 * u, 6 * u, 1.2 * u, '#5b2a14');                                                   // uhlíky
+      for (let i = -3; i < 3; i++) box(X + i * u, Y - (fl ^ (i & 1) ? 2.4 : 1.8) * u, u, u * 0.8, i & 1 ? '#ff8c1a' : '#ffcf3a');
+      const roast = Math.min(1, P.pig / 90), pc = (a, b) => '#' + [0, 1, 2].map((i) => Math.round(parseInt(a.slice(1 + i * 2, 3 + i * 2), 16) * (1 - roast) + parseInt(b.slice(1 + i * 2, 3 + i * 2), 16) * roast).toString(16).padStart(2, '0')).join('');
+      const body = pc('#f2a7a0', '#b5652e'), body2 = pc('#d98a84', '#8a4a20'), flip = Math.floor(t * 1.5) % 2;
+      box(X - 3.5 * u, Y - 6 * u, 7 * u, u * 0.5, '#9aa0a8');                                                  // rožeň
+      box(X - 2.5 * u, Y - 7.2 * u, 5 * u, 2.6 * u, body); box(X - 2.5 * u, Y - (flip ? 7.2 : 5.4) * u, 5 * u, u * 0.8, body2);
+      box(X + 2.5 * u, Y - 6.8 * u, 1.2 * u, 1.6 * u, body);                                                   // hlava
+      box(X + 3.3 * u, Y - 6.4 * u, u * 0.6, u * 0.6, '#d94040');                                              // jablko v tlamě
+      for (const lx of [-2, -1, 1, 2]) box(X + lx * u, Y - (flip ? 8 : 4.8) * u, u * 0.5, u * 0.8, body2);     // nožičky
+      if (Math.random() < 0.15) P.smoke.push({ x: X + (Math.random() - 0.5) * 4 * u, y: Y - 7 * u, a: 0 });
+    } });
+    // reproduktor a noty
+    items.push({ d: S.d(...L.speaker), f: () => {
+      const [X, Y] = S(...L.speaker);
+      box(X - 1.5 * u, Y - 4 * u, 3 * u, 4 * u, '#22262d'); box(X - 0.8 * u, Y - 3.4 * u, 1.6 * u, 1.4 * u, '#555c66');
+      const pulse = Math.sin(t * 9) > 0 ? 1 : 0.7; box(X - 0.6 * u * pulse, Y - 1.6 * u, 1.2 * u * pulse, 1.2 * u * pulse, '#7d8590');
+      if (Math.random() < 0.05) P.notes.push({ x: X, y: Y - 4 * u, a: 0, s: Math.random() < 0.5 ? '♪' : '♫', dx: (Math.random() - 0.5) * 2 });
+    } });
+    // řetěz žárovek nad zahradou (2,6 m nad zemí)
+    items.push({ d: -1e9, f: () => {
+      const pts = L.lights.map(([a, b]) => S(a, b, 2.6)), cols = ['#ff5a5a', '#ffd23f', '#5ad1ff', '#7dff6a', '#ff8af2'];
+      for (const [a, b] of L.lights.map((q) => S(...q))) box(a - u * 0.3, b - S.h26, u * 0.6, S.h26, '#5a4a3a');   // tyče
+      ctx.strokeStyle = '#2a2f38'; ctx.lineWidth = Math.max(1, u * 0.3);
+      for (let i = 0; i < pts.length; i++) {
+        const [a, b] = pts[i], [c, e] = pts[(i + 1) % pts.length];
+        ctx.beginPath(); ctx.moveTo(a, b); ctx.quadraticCurveTo((a + c) / 2, (b + e) / 2 + 2 * u, c, e); ctx.stroke();
+        for (let j = 1; j < 7; j++) {
+          const q = j / 7, x = a + (c - a) * q, y = b + (e - b) * q + 4 * u * q * (1 - q) * 2 - u * 0.0;
+          const on = (Math.floor(t * 2) + j + i) % 3 !== 0, col = cols[(j + i) % cols.length];
+          if (night > 0.3 && on) { ctx.fillStyle = col + '55'; ctx.fillRect(x - 1.5 * u, y - 1 * u, 3 * u, 3 * u); }
+          ctx.fillStyle = on ? col : shade(col, 0.5); ctx.fillRect(x - u * 0.5, y, u, u);
+        }
+      }
+    } });
+  }
+  function drawPartyFx(p, u, dt) {
+    const P = p.party;
+    for (const s of P.smoke) { s.a += dt * 0.6; s.y -= dt * 18 * u / 3; s.x += dt * 6; }
+    P.smoke = P.smoke.filter((s) => s.a < 1);
+    for (const s of P.smoke) { ctx.fillStyle = `rgba(220,220,225,${(0.5 * (1 - s.a)).toFixed(2)})`; const z = Math.max(2, (1 + s.a * 3) * u); ctx.fillRect(s.x - z / 2, s.y - z / 2, z, z); }
+    for (const n of P.notes) { n.a += dt * 0.5; n.y -= dt * 22; n.x += Math.sin(n.a * 8) * 0.6 + n.dx * dt * 10; }
+    P.notes = P.notes.filter((n) => n.a < 1);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const n of P.notes) { ctx.font = `700 ${Math.max(10, Math.round(u * 3))}px ${DISPLAY_FONT}`; ctx.fillStyle = `rgba(27,34,51,${(1 - n.a).toFixed(2)})`; ctx.fillText(n.s, n.x, n.y); }
+    ctx.textAlign = 'start';
+  }
+  POSTAVY.click = (p) => {
+    goTo(p.ix, p.iy - 6, 4); p.wave = performance.now();
+    showCard({ title: p.nazev || 'Kamarád na pivu', text: p.party ? 'Párty je v plném proudu!' : 'Popíjí na předzahrádce. Nechceš se přidat?', rows: [], lon: p.lon, lat: p.lat });
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'px-btn';
+    b.textContent = p.party ? 'Ukončit párty' : '🎉 Uspořádat párty';
+    b.addEventListener('click', () => { if (p.party) p.party = null; else partyStart(p); POSTAVY.click(p); });
+    $('cardLinks').prepend(b);
+  };
+  let postavyLast = 0;
   function drawPostavy(sx, ox, oy, now, night) {
     POSTAVY.drawn = [];
+    const dt = Math.min(0.1, Math.max(0, now - postavyLast) / 1000); postavyLast = now;
+    for (const p of POSTAVY.list) if (p.party) stepParty(p, dt);
     if (sx < 0.3) return;
     for (const p of POSTAVY.list) {
-      if (occluded(p.ix, p.iy, p.d)) continue;
+      const top = toImg(p.x, p.y, p.h + 1.8), base = (p.iy - top[1]) * sx / 10;
+      const X = Math.round(ox + p.ix * sx), Y = Math.round(oy + p.iy * sx);
+      if (X < -400 || Y < -400 || X > fx.clientWidth + 400 || Y > fx.clientHeight + 500) continue;
       const tw = (now - p.wave) / 1000;                                   // čas od kliknutí v sekundách
       const ease = (a) => a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
       const grow = tw < 0 || tw > 4.2 ? 0 : tw < 0.6 ? ease(tw / 0.6) : tw < 3.6 ? 1 : 1 - ease((tw - 3.6) / 0.6);
       const waving = tw > 0.4 && tw < 3.6;
-      const top = toImg(p.x, p.y, p.h + 1.8);
-      const u = Math.max(1, Math.round((p.iy - top[1]) * sx / 10 * (1 + 1.6 * grow)));
-      const X = Math.round(ox + p.ix * sx), Y = Math.round(oy + p.iy * sx);
-      if (X < -100 || Y < -100 || X > fx.clientWidth + 100 || Y > fx.clientHeight + 200) continue;
-      const R = (cx, cy, w, hh, c) => { ctx.fillStyle = c; ctx.fillRect(X + cx * u, Y - cy * u, w * u, hh * u); };
-      const dark = night > 0.6;
-      const SKIN = dark ? '#a8866c' : '#e8c6a4', SHIRT = dark ? '#7a2a22' : '#c0392b', SHIRT2 = dark ? '#5e2019' : '#962d22',
-            JEANS = dark ? '#2a3d5c' : '#3b5b8c', JEANS2 = dark ? '#22324a' : '#2f4a73', BEER = '#e0a526', FOAM = '#fffbe8', OUTC = '#1b2233';
-      ctx.fillStyle = 'rgba(20,26,40,0.35)'; ctx.fillRect(X - 3 * u, Y - Math.max(1, Math.round(u / 2)), 6 * u, Math.max(1, Math.round(u / 2)) + u / 2);   // stín
-      const cyc = ((now / 1000 + p.ph) % 6), drinking = !waving && cyc > 4.2 && cyc < 5.5;
-      R(-2, 1, 2, 1, OUTC); R(0, 1, 2, 1, OUTC);                         // boty
-      R(-2, 4, 2, 3, JEANS); R(0, 4, 2, 3, JEANS2);                      // nohy
-      R(-2, 8, 4, 4, SHIRT); R(1, 8, 1, 4, SHIRT2);                      // tričko
-      R(-1, 10, 2, 2, SKIN); R(-1, 10, 2, 1, '#5a3b22');                 // hlava a vlasy
-      if (waving) {                                                       // levá ruka nahoře a mává
-        const wig = Math.sin(tw * 14) > 0 ? -1 : 0;
-        R(-3, 10, 1, 3, SHIRT); R(-3 + wig, 11, 1, 1, SKIN);
-      } else { R(-3, 8, 1, 3, SHIRT); R(-3, 5, 1, 1, SKIN); }           // levá ruka podél těla
-      if (drinking) {                                                     // pravá ruka zvedá půllitr k puse
-        R(2, 8, 1, 2, SHIRT2); R(1, 9, 2, 2, BEER); R(1, 10, 2, 1, FOAM);
-      } else {
-        R(2, 8, 1, 3, SHIRT2); R(2, 6, 2, 2, BEER); R(2, 7, 2, 1, FOAM); R(4, 6, 1, 1, '#c98f1a');   // půllitr s uchem
+      const u0 = Math.max(1, Math.round(base)), u = Math.max(1, Math.round(base * (1 + 1.6 * grow)));
+      const items = [];
+      // S(dx, dy, dz): obrazovka bodu v metrech od postavičky; S.d hloubka pro řazení (vzdálenější dřív)
+      const S = (dx, dy, dz = 0) => { const x = p.x + dx, y = p.y + dy, h = gz(x, y) + dz, q = toImg(x, y, h); return [Math.round(ox + q[0] * sx), Math.round(oy + q[1] * sx)]; };
+      S.d = (dx, dy) => depth(p.x + dx, p.y + dy, gz(p.x + dx, p.y + dy));
+      S.h26 = Math.round((S(0, 0)[1] - S(0, 0, 2.6)[1]));
+      const t = now / 1000, cyc = ((t + p.ph) % 6);
+      const hostPose = waving ? 'wave' : p.party && Math.sin(t * 0.4 + p.ph) > 0.3 ? 'dance' : cyc > 4.2 && cyc < 5.5 ? 'drink' : 'stand';
+      if (!occluded(p.ix, p.iy, p.d)) items.push({ d: p.d, f: () => drawPerson(X, Y, u, { shirt: '#c0392b', pants: '#3b5b8c', hair: '#5a3b22', skin: '#e8c6a4' }, hostPose, t, { night, beer: true, ph: p.ph }) });
+      if (p.party) {
+        drawProps(p, S, u0, now, night, items);
+        for (const g of p.party.guests) {
+          if (g.wait > 0) continue;
+          const [gX, gY] = S(g.x, g.y);
+          const pose = { arrive: 'walk', 'go-keg': 'walk', 'go-bush': 'walk', go: 'walk', tap: 'tap', vomit: 'vomit', dance: 'dance', drink: Math.sin(t * 0.8 + g.ph) > 0.6 ? 'drink' : 'stand' }[g.state];
+          items.push({ d: S.d(g.x, g.y), f: () => drawPerson(gX, gY, u0, g.look, pose, t + g.ph, { night, beer: g.beer, ph: g.ph }) });
+        }
       }
+      items.sort((a, b) => b.d - a.d);
+      for (const it of items) it.f();
+      if (p.party) drawPartyFx(p, u0, dt);
       if (waving && p.text) {                                             // bublina s textem
-        const fs = Math.max(11, Math.round(u * 3.2));
+        const OUTC = '#1b2233', fs = Math.max(11, Math.round(u * 3.2));
         ctx.font = `600 ${fs}px ${DISPLAY_FONT}`;
         const tw2 = ctx.measureText(p.text).width, bx = X - tw2 / 2 - 8, by = Y - 14 * u - fs - 10, bw = tw2 + 16, bh = fs + 10;
         ctx.fillStyle = '#fffdf6'; ctx.strokeStyle = OUTC; ctx.lineWidth = 2;
