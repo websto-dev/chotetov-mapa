@@ -821,6 +821,8 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
   const vpToImg = (pos) => { const p = viewer.viewport.viewerElementToViewportCoordinates(pos); return [p.x * W, p.y * W]; };
   viewer.addHandler('canvas-click', (e) => {
     if (!e.quick) return;
+    const postava = POSTAVY?.hitAt(e.position.x, e.position.y);
+    if (postava) { POSTAVY.click(postava); return; }
     if (typeof PLANES !== 'undefined') {
       const pl = PLANES.drawn.find((q) => Math.hypot(q[0] - e.position.x, q[1] - e.position.y) < 26);
       if (pl) { planeFollow(pl[2]); return; }
@@ -836,6 +838,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
   $('osd').addEventListener('pointermove', (e) => {
     const r = $('osd').getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
+    if (POSTAVY?.hitAt(mx, my)) { $('osd').style.cursor = 'pointer'; return; }
     if (typeof PLANES !== 'undefined') {
       PLANES.hover = PLANES.drawn.find((q) => Math.hypot(q[0] - mx, q[1] - my) < 26)?.[2] || null;
       if (PLANES.hover) { $('osd').style.cursor = 'pointer'; return; }
@@ -2315,6 +2318,60 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
   // vrstva s vozidly se kreslí ve stejné chvíli jako dlaždice (událost update-viewport), jinak by při posouvání mapy
   // o snímek zaostávala; když se mapa nehýbe, kreslí ji vlastní smyčka
   let osdT = -1e9, rafLast = performance.now();
+  // ---------- postavičky z mesto.json "postavy": [{"lat", "lon", "typ": "pivo", "text"}] ----------
+  // Stojí na místě a popíjejí; po kliknutí se mapa přiblíží, postavička se zvětší, zamává a řekne svůj text.
+  var POSTAVY = { list: ({{POSTAVY}} || []).map((p) => {
+    const x = (p.lon - cam.lon0) * cam.kx, y = (p.lat - cam.lat0) * cam.ky, h = gz(x, y);
+    const [ix, iy] = toImg(x, y, h);
+    return { ...p, x, y, h, ix, iy, d: depth(x, y, h), wave: -1e9, ph: rnd(Math.round(x * 7 + y)) * 6 };
+  }), drawn: [] };
+  POSTAVY.hitAt = (mx, my) => POSTAVY.drawn.find((q) => Math.abs(q[0] - mx) < q[3] * 0.6 + 6 && my < q[1] + 6 && my > q[1] - q[3] - 6)?.[2];
+  POSTAVY.click = (p) => { goTo(p.ix, p.iy - 6, 4); p.wave = performance.now(); };
+  function drawPostavy(sx, ox, oy, now, night) {
+    POSTAVY.drawn = [];
+    if (sx < 0.3) return;
+    for (const p of POSTAVY.list) {
+      if (occluded(p.ix, p.iy, p.d)) continue;
+      const tw = (now - p.wave) / 1000;                                   // čas od kliknutí v sekundách
+      const ease = (a) => a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
+      const grow = tw < 0 || tw > 4.2 ? 0 : tw < 0.6 ? ease(tw / 0.6) : tw < 3.6 ? 1 : 1 - ease((tw - 3.6) / 0.6);
+      const waving = tw > 0.4 && tw < 3.6;
+      const top = toImg(p.x, p.y, p.h + 1.8);
+      const u = Math.max(1, Math.round((p.iy - top[1]) * sx / 10 * (1 + 1.6 * grow)));
+      const X = Math.round(ox + p.ix * sx), Y = Math.round(oy + p.iy * sx);
+      if (X < -100 || Y < -100 || X > fx.clientWidth + 100 || Y > fx.clientHeight + 200) continue;
+      const R = (cx, cy, w, hh, c) => { ctx.fillStyle = c; ctx.fillRect(X + cx * u, Y - cy * u, w * u, hh * u); };
+      const dark = night > 0.6;
+      const SKIN = dark ? '#a8866c' : '#e8c6a4', SHIRT = dark ? '#7a2a22' : '#c0392b', SHIRT2 = dark ? '#5e2019' : '#962d22',
+            JEANS = dark ? '#2a3d5c' : '#3b5b8c', JEANS2 = dark ? '#22324a' : '#2f4a73', BEER = '#e0a526', FOAM = '#fffbe8', OUTC = '#1b2233';
+      ctx.fillStyle = 'rgba(20,26,40,0.35)'; ctx.fillRect(X - 3 * u, Y - Math.max(1, Math.round(u / 2)), 6 * u, Math.max(1, Math.round(u / 2)) + u / 2);   // stín
+      const cyc = ((now / 1000 + p.ph) % 6), drinking = !waving && cyc > 4.2 && cyc < 5.5;
+      R(-2, 1, 2, 1, OUTC); R(0, 1, 2, 1, OUTC);                         // boty
+      R(-2, 4, 2, 3, JEANS); R(0, 4, 2, 3, JEANS2);                      // nohy
+      R(-2, 8, 4, 4, SHIRT); R(1, 8, 1, 4, SHIRT2);                      // tričko
+      R(-1, 10, 2, 2, SKIN); R(-1, 10, 2, 1, '#5a3b22');                 // hlava a vlasy
+      if (waving) {                                                       // levá ruka nahoře a mává
+        const wig = Math.sin(tw * 14) > 0 ? -1 : 0;
+        R(-3, 10, 1, 3, SHIRT); R(-3 + wig, 11, 1, 1, SKIN);
+      } else { R(-3, 8, 1, 3, SHIRT); R(-3, 5, 1, 1, SKIN); }           // levá ruka podél těla
+      if (drinking) {                                                     // pravá ruka zvedá půllitr k puse
+        R(2, 8, 1, 2, SHIRT2); R(1, 9, 2, 2, BEER); R(1, 10, 2, 1, FOAM);
+      } else {
+        R(2, 8, 1, 3, SHIRT2); R(2, 6, 2, 2, BEER); R(2, 7, 2, 1, FOAM); R(4, 6, 1, 1, '#c98f1a');   // půllitr s uchem
+      }
+      if (waving && p.text) {                                             // bublina s textem
+        const fs = Math.max(11, Math.round(u * 3.2));
+        ctx.font = `600 ${fs}px ${DISPLAY_FONT}`;
+        const tw2 = ctx.measureText(p.text).width, bx = X - tw2 / 2 - 8, by = Y - 14 * u - fs - 10, bw = tw2 + 16, bh = fs + 10;
+        ctx.fillStyle = '#fffdf6'; ctx.strokeStyle = OUTC; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(X - 5, by + bh - 1); ctx.lineTo(X, by + bh + 7); ctx.lineTo(X + 5, by + bh - 1); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(X - 5, by + bh); ctx.lineTo(X, by + bh + 7); ctx.lineTo(X + 5, by + bh); ctx.stroke();
+        ctx.fillStyle = OUTC; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(p.text, X, by + bh / 2 + 1); ctx.textAlign = 'start';
+      }
+      POSTAVY.drawn.push([X, Y, p, 12 * u]);
+    }
+  }
   function frame(now) {
     perf(now - rafLast); rafLast = now;
     if (performance.now() - osdT > 24) draw(now, false);
@@ -2483,6 +2540,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
         }
       }
     }
+    drawPostavy(sx, ox, oy, now, night);
     // mraky (jen při oddálení); při dešti a sněžení tmavší a víc
     {
       const fade = Math.max(0, Math.min(1, (0.45 - sx) / 0.25));

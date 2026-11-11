@@ -53,5 +53,13 @@
    "lon": 14.782849
   }
  ],
- "vlak": "regionova"
+ "vlak": "regionova",
+ "postavy": [
+  {
+   "lat": 50.33354,
+   "lon": 14.802226,
+   "typ": "pivo",
+   "text": "Na zdraví! 🍺"
+  }
+ ]
 }
