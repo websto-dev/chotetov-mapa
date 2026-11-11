@@ -2732,14 +2732,14 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     inter: ['#33091b', '#521029', '#7c1b45', '#9c3561', '#bb5582'], lamp: ['#8a7425', '#cdb447', '#f5e48a', '#fff6c8', '#ffffff'],
     orange: ['#7a3d06', '#b8600c', '#f0921e', '#ffbb55', '#ffe0a0'],
     silver: ['#4a5058', '#7d848e', '#b6bcc4', '#dde1e6', '#f6f8fa'], pblue: ['#0b1f4a', '#163a8a', '#2457c5', '#4f86e8', '#9cc0ff'],
-    pyel: ['#6e6200', '#a89800', '#dcd000', '#f2ee4a', '#fffba8'], beacon: ['#3a6cff', '#6f9bff', '#a9c6ff', '#e0ebff', '#ffffff'] };
+    pyel: ['#4a6a00', '#7aa000', '#b4dc10', '#d8f53a', '#f2ffa0'], beacon: ['#3a6cff', '#6f9bff', '#a9c6ff', '#e0ebff', '#ffffff'] };
   const VMATS = Object.keys(VRAMP), hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const VRGB = VMATS.map((m) => VRAMP[m].map(hexRgb));
   const VFONT = { R: ['110', '101', '110', '101', '101'], A: ['111', '101', '111', '101', '101'], D: ['110', '101', '101', '101', '110'],
                   E: ['111', '100', '110', '100', '111'], G: ['111', '100', '101', '101', '111'], S: ['011', '100', '010', '001', '110'],
                   T: ['111', '010', '010', '010', '010'], 1: ['010', '110', '010', '010', '111'], 2: ['110', '001', '010', '100', '111'],
                   '°': ['11', '11', '00', '00', '00'], ' ': ['0', '0', '0', '0', '0'], P: ['110', '101', '110', '100', '100'],
-                  O: ['010', '101', '101', '101', '010'], L: ['100', '100', '100', '100', '111'], I: ['111', '010', '010', '010', '111'], C: ['011', '100', '100', '100', '011'] };
+                  O: ['010', '101', '101', '101', '010'], L: ['100', '100', '100', '100', '111'], I: ['111', '010', '010', '010', '111'], C: ['011', '100', '100', '100', '011'], 5: ['111', '100', '110', '001', '110'], 8: ['010', '101', '010', '101', '010'] };
   const VCACHE = new Map();
   // osy vozu v obrazových px na metr (a dopředu ve směru h, b vpravo od řidiče, z nahoru) a jejich příspěvek k hloubce (větší = dál);
   // směr se zaokrouhlí na 3°, aby se obrázky daly znovu použít
@@ -2943,29 +2943,43 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     drawSprite(vehSprite(`car${bs.key}|${sig}|${sig ? wave : 0}`, bs, carGeom, (api) => carRiders(api, car.riders, wave)), S, ...fr.o);
     if (car.honk > P.T) { const [x, y] = vpt(fr, 1.5, 0), [hx, hy] = S(x, y, 1.6); drawBubble(hx, hy, 'TÚ TÚ!', Math.max(10, Math.round(u * 2.6)), true); }
   }
-  // policejní kombi: stříbrné s modrožlutým pruhem, nápis POLICIE, majáky na střeše (lit: 0 zhasnuto, 1/2 střídavě)
+  // česká policie: stříbrná Octavia combi, modrý pruh s bílým POLICIE lemovaný reflexní žlutozelenou,
+  // šachovnice modrá/žlutozelená u přídě a vzadu, dva modré majáky na rampě (lit: 0 zhasnuto, 1/2 střídavě)
   function policeGeom(lit) {
     return (api) => {
       const { P, poly, poly2, box, ell, wheel } = api;
-      box(-2.35, 2.35, -0.9, 0.9, 0.3, 1.0, 'silver', 0.5, 0.9);                  // karoserie, kapota k přídi klesá
-      box(-2.25, 0.85, -0.82, 0.82, 1.0, 1.52, 'silver', 0.55);                   // kabina kombi
-      poly2([P(-2.05, -0.83, 1.06), P(0.7, -0.83, 1.06), P(0.7, -0.83, 1.44), P(-2.05, -0.83, 1.44)], 'glass', 0.5);
-      poly([P(0.86, -0.75, 1.04), P(0.86, 0.75, 1.04), P(0.86, 0.75, 1.46), P(0.86, -0.75, 1.46)], 'glass', 0.7);
-      poly([P(-2.26, -0.7, 1.08), P(-2.26, 0.7, 1.08), P(-2.26, 0.7, 1.42), P(-2.26, -0.7, 1.42)], 'glass', 0.45);
-      poly2([P(-2.35, -0.91, 0.44), P(2.35, -0.91, 0.44), P(2.35, -0.91, 0.74), P(-2.35, -0.91, 0.74)], 'pblue', 0.5);   // modrý pruh
-      poly2([P(-2.35, -0.91, 0.74), P(2.35, -0.91, 0.74), P(2.35, -0.91, 0.82), P(-2.35, -0.91, 0.82)], 'pyel', 0.6);   // žlutý pruh
-      for (const a of [1.5, -1.55]) wheel(a, 0.9, 0.33);
-      box(2.35, 2.47, -0.9, 0.9, 0.3, 0.5, 'frame', 0.4);
-      for (const b of [-0.62, 0.62]) poly(ell(2.36, b, 0.74, 0.1, 8).map(([a, bb, z]) => [2.36, b + (a - 2.36), z]), 'lamp', 0.6);
-      box(-0.55, 0.35, -0.6, 0.6, 1.52, 1.6, 'frame', 0.3);                       // rampa majáků
-      box(-0.5, 0.3, -0.58, -0.04, 1.6, 1.74, lit === 1 ? 'beacon' : 'pblue', lit === 1 ? 0.85 : 0.35);
-      box(-0.5, 0.3, 0.04, 0.58, 1.6, 1.74, lit === 2 ? 'beacon' : 'pblue', lit === 2 ? 0.85 : 0.35);
+      const A0 = -2.3, A1 = 2.35, Z0 = 0.3, ZB = 0.95, W = 0.9, w = 0.8;
+      box(A0, A1, -W, W, Z0, ZB, 'silver', 0.5, 0.8);                               // karoserie, kapota k přídi klesá
+      // prosklená kabina kombi: skloněné čelní sklo, dlouhá střecha, téměř svislé páté dveře
+      const side = (b) => [P(1.05, b, ZB - 0.02), P(0.05, b, 1.47), P(-2.05, b, 1.47), P(-2.25, b, ZB)];
+      for (const b of [-w, w]) poly(side(b), 'silver', b < 0 ? 0.5 : 0.4);
+      poly([P(0.05, -w, 1.47), P(0.05, w, 1.47), P(-2.05, w, 1.47), P(-2.05, -w, 1.47)], 'silver', 0.85);   // střecha
+      poly([P(1.05, -w, ZB - 0.02), P(1.05, w, ZB - 0.02), P(0.05, w, 1.47), P(0.05, -w, 1.47)], 'glass', 0.75);   // čelní sklo
+      poly([P(-2.25, -w, ZB), P(-2.25, w, ZB), P(-2.05, w, 1.47), P(-2.05, -w, 1.47)], 'glass', 0.45);   // zadní sklo
+      poly2([P(0.82, -w - 0.01, 1.0), P(0.0, -w - 0.01, 1.4), P(-1.95, -w - 0.01, 1.4), P(-2.1, -w - 0.01, 1.0)], 'glass', 0.5);   // boční okna
+      poly2([P(-0.6, -w - 0.02, 1.0), P(-0.52, -w - 0.02, 1.0), P(-0.52, -w - 0.02, 1.42), P(-0.6, -w - 0.02, 1.42)], 'silver', 0.4);   // B sloupek
+      for (const b of [-0.68, 0.68]) box(-1.9, 0.0, b - 0.03, b + 0.03, 1.47, 1.53, 'frame', 0.4);   // střešní ližiny
+      // polep na bocích: žlutozelená linka, modrý pruh, žlutozelená linka
+      const band = (z0, z1, m, br, a0 = A0, a1 = A1) => poly2([P(a0, -W - 0.01, z0), P(a1, -W - 0.01, z0), P(a1, -W - 0.01, z1), P(a0, -W - 0.01, z1)], m, br);
+      band(0.36, 0.42, 'pyel', 0.7); band(0.42, 0.86, 'pblue', 0.5, A0, 2.1); band(0.86, 0.92, 'pyel', 0.7);
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) band(0.42 + j * 0.22, 0.64 + j * 0.22, (i + j) % 2 ? 'pyel' : 'pblue', 0.6, 2.1 + i * 0.0625, 2.1625 + i * 0.0625);
+      // záď: šachovnice přes celou šířku
+      for (let i = 0; i < 6; i++) for (let j = 0; j < 2; j++) { const b0 = -W + i * 0.3; poly([P(A0 - 0.01, b0, 0.5 + j * 0.2), P(A0 - 0.01, b0 + 0.3, 0.5 + j * 0.2), P(A0 - 0.01, b0 + 0.3, 0.7 + j * 0.2), P(A0 - 0.01, b0, 0.7 + j * 0.2)], (i + j) % 2 ? 'pyel' : 'pblue', 0.55); }
+      for (const a of [1.45, -1.5]) wheel(a, W, 0.32);
+      box(A1, A1 + 0.1, -W, W, Z0, 0.48, 'frame', 0.4);                              // přední nárazník
+      box(A0 - 0.08, A0, -W, W, Z0, 0.46, 'frame', 0.4);
+      poly([P(A1 + 0.01, -0.45, 0.58), P(A1 + 0.01, 0.45, 0.58), P(A1 + 0.01, 0.45, 0.7), P(A1 + 0.01, -0.45, 0.7)], 'frame', 0.5);   // maska
+      for (const b of [-0.68, 0.68]) poly([P(A1 + 0.01, b - 0.17, 0.62), P(A1 + 0.01, b + 0.17, 0.62), P(A1 + 0.01, b + 0.17, 0.74), P(A1 + 0.01, b - 0.17, 0.74)], 'lamp', 0.7);
+      for (const b of [-0.72, 0.72]) poly([P(A0 - 0.02, b - 0.12, 0.72), P(A0 - 0.02, b + 0.12, 0.72), P(A0 - 0.02, b + 0.12, 0.9), P(A0 - 0.02, b - 0.12, 0.9)], 'red', 0.5);
+      box(-0.75, -0.05, -0.62, 0.62, 1.53, 1.6, 'frame', 0.3);                       // rampa majáků
+      box(-0.7, -0.1, -0.6, -0.06, 1.6, 1.73, lit === 1 ? 'beacon' : 'pblue', lit === 1 ? 0.85 : 0.4);
+      box(-0.7, -0.1, 0.06, 0.6, 1.6, 1.73, lit === 2 ? 'beacon' : 'pblue', lit === 2 ? 0.85 : 0.4);
     };
   }
   function drawPolice(p, S, u, now, night) {
     const P = p.party, pol = P.police, fr = carPose(p.layout.rp, pol.d), bs = vehBasis(p, fr.h);
     const lit = pol.state === 'leave' ? 1 + Math.floor(now / 220) % 2 : 0, th = bs.r[0] + bs.r[1] < 0 ? 0 : Math.PI;
-    drawSprite(vehSprite(`pol${bs.key}|${lit}`, bs, policeGeom(lit), (api) => vehText(api, 'POLICIE', -0.5, th, 0.92, 0.72, '#0b1f4a', 1)), S, ...fr.o);
+    drawSprite(vehSprite(`pol${bs.key}|${lit}`, bs, policeGeom(lit), (api) => vehText(api, 'POLICIE', -0.1, th, 0.92, 0.86, '#163a8a', 1)), S, ...fr.o);
     if (lit) {                                                                  // modrá záře majáku
       const [x, y] = vpt(fr, -0.1, lit === 1 ? -0.3 : 0.3), [gx, gy] = S(x, y, 1.7), r = (night > 0.3 ? 9 : 5) * u;
       ctx.fillStyle = `rgba(70,130,255,${night > 0.3 ? 0.35 : 0.22})`; ctx.beginPath(); ctx.arc(gx, gy, r, 0, Math.PI * 2); ctx.fill();
