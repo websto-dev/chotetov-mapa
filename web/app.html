@@ -2635,107 +2635,204 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     };
     return { W, poly, line, box, ell, wheel, cylA, stack, lw };
   }
-  // cisterna: americký tahač s dlouhou kapotou a chromovanou maskou, celozelený válcový návěs s velkým nápisem RADEGAST 12°
-  function drawTanker(p, S, u, now) {
-    const P = p.party, tk = P.tanker, { W, poly, line, box, ell, wheel, cylA, stack } = vehKit(p.layout, S, u, tk.x);
-    const RED = '#c21b22', CHR = '#d9dde2', GLS = '#8cc4ea', GRN = '#2f8a3a';
-    // ---- návěs (a −7,0 … 3,4), poloměr 1,22 m, osa ve výšce 2,25 m ----
-    const T0 = -7.0, T1 = 3.4, RAD = 1.22, ZC = 2.25, N = 32;
-    box(T0 + 0.3, T1 - 0.4, -0.8, 0.8, 0.6, 1.05, '#2a2d33');
+  // ---- pixel art vozidel: geometrie se rasterizuje bez vyhlazování do malého obrázku (materiál + jas), pak se každý
+  // materiál převede na rampu několika barev se šachovnicovým ditheringem a dostane tmavý obrys. Obrázek (sprite) má
+  // 2× jemnější pixely než mapa a kreslí se zvětšený po pixelech, takže sedí ke stylu dlaždic.
+  const VRAMP = {
+    red: ['#4a0a0e', '#7e1016', '#b8181f', '#e2392f', '#ff7a5c'], green: ['#0c3214', '#185422', '#2a7f35', '#45a84f', '#8ad67c'],
+    chrome: ['#3e434b', '#6f7680', '#a9b0b9', '#d9dee4', '#ffffff'], glass: ['#1a3452', '#346293', '#5f9ccc', '#9fcdee', '#e2f2ff'],
+    tire: ['#0b0c0f', '#17191d', '#2a2d33', '#3d4048', '#555a63'], frame: ['#121418', '#202328', '#30343a', '#454950', '#5c6169'],
+    pink: ['#5e1236', '#a52a63', '#ef5fa8', '#ff93c8', '#ffd2ea'], seat: ['#857c6c', '#bdb29d', '#e6ddc9', '#f7f1e3', '#ffffff'],
+    inter: ['#33091b', '#521029', '#7c1b45', '#9c3561', '#bb5582'], lamp: ['#8a7425', '#cdb447', '#f5e48a', '#fff6c8', '#ffffff'],
+    orange: ['#7a3d06', '#b8600c', '#f0921e', '#ffbb55', '#ffe0a0'] };
+  const VMATS = Object.keys(VRAMP), hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const VRGB = VMATS.map((m) => VRAMP[m].map(hexRgb));
+  const VFONT = { R: ['110', '101', '110', '101', '101'], A: ['111', '101', '111', '101', '101'], D: ['110', '101', '101', '101', '110'],
+                  E: ['111', '100', '110', '100', '111'], G: ['111', '100', '101', '101', '111'], S: ['011', '100', '010', '001', '110'],
+                  T: ['111', '010', '010', '010', '010'], 1: ['010', '110', '010', '010', '111'], 2: ['110', '001', '010', '100', '111'],
+                  '°': ['11', '11', '00', '00', '00'], ' ': ['0', '0', '0', '0', '0'] };
+  const VCACHE = new Map();
+  // osy vozu v obrazových px na metr: a dopředu (po ulici na západ), b na sever (vlevo od jízdy), z nahoru
+  function vehBasis(p) {
+    if (p.vbasis) return p.vbasis;
+    const [x0, y0, x1, y1] = p.layout.ulice, dl = Math.hypot(x1 - x0, y1 - y0), ex = (x1 - x0) / dl, ey = (y1 - y0) / dl;
+    const o = toImg(p.x, p.y, p.h), f = (dx, dy, dz) => { const q = toImg(p.x + dx * 10, p.y + dy * 10, p.h + dz * 10); return [(q[0] - o[0]) / 10, (q[1] - o[1]) / 10]; };
+    return (p.vbasis = { A: f(-ex, -ey, 0), B: f(-ey, ex, 0), Z: f(0, 0, 1) });
+  }
+  // sprite: geom(api) nakreslí mnohoúhelníky, post(api) pak dokreslí pixely navrch (nápis, postavy)
+  function vehSprite(key, basis, geom, post) {
+    if (VCACHE.has(key)) return VCACHE.get(key);
+    const zl = Math.hypot(...basis.Z), K = Math.max(10, Math.round(2 * zl)), k = K / zl;
+    const [A, B, Z] = [basis.A, basis.B, basis.Z].map((v) => [v[0] * k, v[1] * k]);
+    const P = (a, b, z) => [a * A[0] + b * B[0] + z * Z[0], a * A[1] + b * B[1] + z * Z[1]];
+    const polys = [];
+    const poly = (pts, m, br) => polys.push([pts, VMATS.indexOf(m), Math.max(0, Math.min(1, br))]);
+    const box = (a0, a1, b0, b1, z0, z1, m, br = 0.55, z1f = z1, end = true) => {
+      poly([P(a0, b0, z0), P(a1, b0, z0), P(a1, b0, z1f), P(a0, b0, z1)], m, br);
+      if (end) poly([P(a1, b0, z0), P(a1, b1, z0), P(a1, b1, z1f), P(a1, b0, z1f)], m, br + 0.18);
+      poly([P(a0, b0, z1), P(a1, b0, z1f), P(a1, b1, z1f), P(a0, b1, z1)], m, br + 0.32);
+    };
+    const ell = (a, b, z, r, n = 16) => Array.from({ length: n }, (_, i) => { const t = i / n * Math.PI * 2; return P(a + r * Math.cos(t), b, z + r * Math.sin(t)); });
+    const wheel = (a, b, r = 0.52) => { poly(ell(a, b, r, r), 'tire', 0.35); poly(ell(a, b - 0.01, r, r * 0.45), 'chrome', 0.6); };
+    const cyl = (a0, a1, b, z, r, m, n = 24, cap = true) => {
+      const R = (a, t) => P(a, b + r * Math.cos(t), z + r * Math.sin(t)), st = [];
+      for (let i = 0; i < n; i++) { const t0 = i / n * Math.PI * 2, t1 = (i + 1) / n * Math.PI * 2, tm = (t0 + t1) / 2, v = -Math.cos(tm) + 0.8 * Math.sin(tm); if (v > -0.25) st.push([v, t0, t1, tm]); }
+      st.sort((q, w) => q[0] - w[0]);
+      for (const [, t0, t1, tm] of st) poly([R(a0, t0), R(a1, t0), R(a1, t1), R(a0, t1)], m, 0.18 + 0.82 * Math.max(0, -0.4 * Math.cos(tm) + 0.9 * Math.sin(tm)));
+      if (cap) poly(Array.from({ length: 20 }, (_, i) => R(a1, i / 20 * Math.PI * 2)), m, 0.5);
+      return { R, st };
+    };
+    const api = { P, poly, box, ell, wheel, cyl, K };
+    geom(api);
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const [pts] of polys) for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const ox = Math.floor(-x0) + 2, oy = Math.floor(-y0) + 12, w = Math.ceil(x1 - x0) + 5, h = Math.ceil(y1 - y0) + 15;
+    const mat = new Int8Array(w * h).fill(-1), bri = new Float32Array(w * h);
+    for (const [pts, m, br] of polys) {                                   // vyplnění bez vyhlazování (střed pixelu uvnitř)
+      const q = pts.map(([x, y]) => [x + ox, y + oy]);
+      let qx0 = 1e9, qy0 = 1e9, qx1 = -1e9, qy1 = -1e9;
+      for (const [x, y] of q) { qx0 = Math.min(qx0, x); qy0 = Math.min(qy0, y); qx1 = Math.max(qx1, x); qy1 = Math.max(qy1, y); }
+      for (let y = Math.max(0, Math.floor(qy0)); y <= Math.min(h - 1, Math.ceil(qy1)); y++) {
+        const cy = y + 0.5, xs = [];
+        for (let i = 0, j = q.length - 1; i < q.length; j = i++) {
+          const [xi, yi] = q[i], [xj, yj] = q[j];
+          if ((yi > cy) !== (yj > cy)) xs.push(xi + (cy - yi) * (xj - xi) / (yj - yi));
+        }
+        xs.sort((a, b) => a - b);
+        for (let s = 0; s + 1 < xs.length; s += 2)
+          for (let x = Math.max(0, Math.ceil(xs[s] - 0.5)); x <= Math.min(w - 1, Math.floor(xs[s + 1] - 0.5)); x++) { mat[y * w + x] = m; bri[y * w + x] = br; }
+      }
+    }
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const g = cv.getContext('2d'), img = g.createImageData(w, h), D = img.data;
+    const set = (x, y, rgb) => { if (x < 0 || y < 0 || x >= w || y >= h) return; const i = (y * w + x) * 4; D[i] = rgb[0]; D[i + 1] = rgb[1]; D[i + 2] = rgb[2]; D[i + 3] = 255; };
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const m = mat[y * w + x]; if (m < 0) continue;
+      const ramp = VRGB[m], f = bri[y * w + x] * (ramp.length - 1), base = Math.floor(f), fr = f - base;
+      const up = fr > 0.62 || (fr > 0.38 && (x + y) % 2);                // šachovnice jen v pásmu mezi dvěma odstíny
+      set(x, y, ramp[Math.min(ramp.length - 1, base + (up ? 1 : 0))]);
+    }
+    const OUTL = [20, 22, 30], at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? -1 : mat[y * w + x]);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const m = mat[y * w + x]; if (m < 0) continue;
+      if (at(x + 1, y) < 0 || at(x - 1, y) < 0 || at(x, y + 1) < 0 || at(x, y - 1) < 0) set(x, y, OUTL);   // obrys proti pozadí
+      else if (at(x + 1, y) !== m || at(x, y + 1) !== m) set(x, y, VRGB[m][0]);                            // hrana mezi materiály
+    }
+    if (post) post({ ...api, set, ox, oy, w, h, S: (a, b, z) => { const [x, y] = P(a, b, z); return [Math.round(x + ox), Math.round(y + oy)]; } });
+    g.putImageData(img, 0, 0);
+    const spr = { cv, ox, oy, k: zl / K };                                // k: obrazové px mapy na pixel spritu
+    if (VCACHE.size > 30) VCACHE.clear();
+    VCACHE.set(key, spr); return spr;
+  }
+  // vykreslení spritu: počátek vozu (a = b = z = 0) leží v bodě (cx, cy) metrů od postavičky
+  function drawSprite(spr, S, cx, cy) {
+    const [X, Y] = S(cx, cy), sc = S.sx * spr.k;
+    ctx.drawImage(spr.cv, Math.round(X - spr.ox * sc), Math.round(Y - spr.oy * sc), Math.round(spr.cv.width * sc), Math.round(spr.cv.height * sc));
+  }
+  // nápis malým pixelovým písmem; každý sloupec písma se posune podle sklonu osy vozu
+  function vehText(api, txt, a, th, rad, zc, dark) {
+    const cols = [];
+    for (const ch of txt) { const gl = VFONT[ch] || VFONT[' ']; for (let c = 0; c < gl[0].length; c++) cols.push(gl.map((r) => r[c] === '1')); cols.push([false, false, false, false, false]); }
+    cols.pop();
+    const SC = api.K >= 9 ? 2 : 1, [xc, yc] = api.S(a, rad * Math.cos(th), zc + rad * Math.sin(th));
+    const [ax, ay] = api.P(-1, 0, 0), slope = ay / ax, tx0 = xc - Math.round(cols.length * SC / 2), ty0 = yc - SC;
+    const pix = new Set(), key = (x, y) => x * 4096 + y;
+    cols.forEach((col, i) => { const xcol = tx0 + i * SC, sh = Math.round((xcol - xc) * slope); col.forEach((on, r) => { if (on) for (let sx = 0; sx < SC; sx++) for (let sy = 0; sy < SC; sy++) pix.add(key(xcol + sx, ty0 + sh + r * SC + sy)); }); });
+    const DK = hexRgb(dark), WH = [255, 255, 255];
+    for (const v of pix) { const x = Math.floor(v / 4096), y = v % 4096; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) if (!pix.has(key(x + dx, y + dy))) api.set(x + dx, y + dy, DK); }
+    for (const v of pix) api.set(Math.floor(v / 4096), v % 4096, WH);
+  }
+  // cisterna: americký tahač s dlouhou kapotou a chromovanou maskou, celozelený válcový návěs s nápisem RADEGAST 12°
+  const T_RAD = 1.22, T_ZC = 2.25;
+  function tankerGeom(api) {
+    const { P, poly, box, ell, wheel, cyl } = api;
+    const T0 = -7.0, T1 = 3.4;
+    box(T0 + 0.3, T1 - 0.4, -0.8, 0.8, 0.6, 1.05, 'frame', 0.4);
     wheel(-5.6, -1.0); wheel(-4.45, -1.0);
-    box(-6.2, -3.85, -1.15, -0.95, 1.12, 1.22, '#2a2d33');
-    box(1.5, 1.7, -0.92, -0.75, 0.0, 1.05, '#555b63');
-    const ring = (a, th) => W(a, RAD * Math.cos(th), ZC + RAD * Math.sin(th));
-    const strips = [];
-    for (let k = 0; k < N; k++) { const t0 = k / N * Math.PI * 2, t1 = (k + 1) / N * Math.PI * 2, tm = (t0 + t1) / 2, v = -Math.cos(tm) + 0.8 * Math.sin(tm); if (v > -0.25) strips.push([v, t0, t1, tm]); }
-    strips.sort((q, r) => q[0] - r[0]);
-    for (const [, t0, t1, tm] of strips) poly([ring(T0, t0), ring(T1, t0), ring(T1, t1), ring(T0, t1)], shade(GRN, 0.62 + 0.55 * Math.max(0, -0.4 * Math.cos(tm) + 0.9 * Math.sin(tm))), false);
-    for (const [, t0, t1, tm] of strips) if (Math.abs(tm - Math.PI * 2 / 3) < Math.PI / N) poly([ring(T0 + 0.3, t0), ring(T1 - 0.3, t0), ring(T1 - 0.3, t1), ring(T0 + 0.3, t1)], '#8fd39a', false);   // odlesk
-    for (const a of [-4.9, 1.3]) for (const [v, t0, t1] of strips) poly([ring(a, t0), ring(a + 0.1, t0), ring(a + 0.1, t1), ring(a, t1)], shade(GRN, 0.55 + 0.25 * Math.max(0, v)), false);   // svary
-    let tTop = 0, tBot = 0, vT = 1e9, vB = -1e9;
-    for (let k = 0; k < 72; k++) { const th = k / 72 * Math.PI * 2, [, yy] = ring(T0, th); if (yy < vT) { vT = yy; tTop = th; } if (yy > vB) { vB = yy; tBot = th; } }
-    for (const th of [tTop, tBot]) line(ring(T0, th), ring(T1, th), '#1b2233');
-    { const cap = []; for (let k = 0; k < 28; k++) cap.push(ring(T1, k / 28 * Math.PI * 2)); poly(cap, shade(GRN, 0.95)); }
-    box(-5.6, 1.6, -0.32, 0.32, ZC + RAD - 0.02, ZC + RAD + 0.1, '#7d8590');
-    for (const a of [-4.0, -0.7]) poly(ell(a, 0, ZC + RAD + 0.15, 0.3), '#c9ced5');
-    // velký bílý nápis: afinní mapa na plochu pláště nejvíc natočenou k divákovi, čte se zleva doprava (dozadu po voze)
-    { const th = Math.PI * 168 / 180, ac = (T0 + T1) / 2 + 0.1, o = ring(ac, th), pa = ring(ac - 4, th), d = 0.35, pb = ring(ac, th + d), pc = ring(ac, th - d);
-      const du = [(pa[0] - o[0]) / 4, (pa[1] - o[1]) / 4], dv = [(pb[0] - pc[0]) / (2 * d * RAD), (pb[1] - pc[1]) / (2 * d * RAD)];   // S() zaokrouhluje na pixely, proto delší úseky
-      ctx.save(); ctx.transform(du[0] / 100, du[1] / 100, dv[0] / 100, dv[1] / 100, o[0], o[1]);
-      ctx.font = `900 110px "Arial Black", Impact, ${DISPLAY_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const txt = 'RADEGAST 12°', sc = 880 / ctx.measureText(txt).width; ctx.scale(sc, 1);
-      ctx.lineJoin = 'round'; ctx.lineWidth = 14 / sc; ctx.strokeStyle = '#14531d'; ctx.strokeText(txt, 0, 0);
-      ctx.fillStyle = '#ffffff'; ctx.fillText(txt, 0, 0); ctx.restore(); ctx.textAlign = 'start'; }
-    // ---- tahač (a 2,4 … 9,85), od zadku dopředu ----
-    box(2.4, 9.6, -0.95, 0.95, 0.55, 0.95, '#2a2d33', 0.95, false);
+    box(-6.2, -3.85, -1.15, -0.95, 1.12, 1.22, 'frame', 0.4);
+    box(1.5, 1.7, -0.92, -0.75, 0.0, 1.05, 'frame', 0.5);
+    const { R, st } = cyl(T0, T1, 0, T_ZC, T_RAD, 'green', 28, false);
+    for (const a of [-4.9, 1.3]) for (const [, t0, t1] of st) poly([R(a, t0), R(a + 0.12, t0), R(a + 0.12, t1), R(a, t1)], 'green', 0.12);
+    poly(Array.from({ length: 24 }, (_, i) => R(T1, i / 24 * Math.PI * 2)), 'green', 0.45);
+    box(-5.6, 1.6, -0.32, 0.32, T_ZC + T_RAD - 0.02, T_ZC + T_RAD + 0.1, 'chrome', 0.3);
+    for (const a of [-4.0, -0.7]) box(a - 0.3, a + 0.3, -0.3, 0.3, T_ZC + T_RAD, T_ZC + T_RAD + 0.22, 'chrome', 0.5);
+    // tahač
+    box(2.4, 9.6, -0.95, 0.95, 0.55, 0.95, 'frame', 0.35, 0.95, false);
     wheel(3.25, -1.0); wheel(4.45, -1.0);
-    box(2.9, 4.9, -1.15, -0.95, 1.12, 1.22, '#2a2d33');
-    stack(5.45, 1.37, 1.2, 4.4, 0.1, CHR);
-    box(4.0, 5.5, -1.25, 1.25, 0.95, 3.75, RED, 3.75, false);                       // spací nástavba
-    poly([W(4.3, -1.26, 2.65), W(5.2, -1.26, 2.65), W(5.2, -1.26, 3.05), W(4.3, -1.26, 3.05)], GLS);
-    box(5.5, 6.9, -1.25, 1.25, 0.95, 3.3, RED);                                      // kabina
-    poly([W(6.9, -1.12, 2.35), W(6.9, 1.12, 2.35), W(6.9, 1.12, 3.15), W(6.9, -1.12, 3.15)], GLS);
-    line(W(6.9, 0, 2.35), W(6.9, 0, 3.15), '#1b2233');
-    poly([W(5.75, -1.26, 2.3), W(6.7, -1.26, 2.3), W(6.7, -1.26, 3.05), W(5.75, -1.26, 3.05)], GLS);
-    poly([W(5.85, -1.27, 1.2), W(6.65, -1.27, 1.2), W(6.65, -1.27, 2.15), W(5.85, -1.27, 2.15)], shade(RED, 0.9));
-    box(6.85, 7.15, -1.25, 1.25, 3.3, 3.4, '#26292e');                               // stínítko
-    for (const b of [-0.9, -0.3, 0.3, 0.9]) poly(ell(6.95, b, 3.48, 0.07, 6), '#ffb22e', false);
-    stack(5.45, -1.37, 1.2, 4.4, 0.1, CHR);
-    if (tk.state !== 'drink' && Math.random() < 0.3) { const [sx, sy] = W(5.45, -1.37, 4.5); P.smoke.push({ x: sx, y: sy, a: 0.3 }); }
-    cylA(5.55, 6.75, -1.12, 0.78, 0.33, CHR);                                        // nádrž
-    cylA(6.9, 7.45, -1.0, 2.0, 0.27, CHR);                                           // vzduchový filtr
-    // dlouhá kapota: užší než kabina, zaoblené horní hrany, k masce mírně klesá
-    const HB = 0.85, A0 = 6.9, A1 = 9.5, Z0 = 2.35, Z1 = 2.1;
-    poly([W(A0, -HB, 0.95), W(A1, -HB, 0.95), W(A1, -HB, Z1 - 0.25), W(A0, -HB, Z0 - 0.25)], RED);
-    poly([W(A0, -HB, Z0 - 0.25), W(A1, -HB, Z1 - 0.25), W(A1, -HB + 0.25, Z1), W(A0, -HB + 0.25, Z0)], shade(RED, 1.1));
-    poly([W(A0, -HB + 0.25, Z0), W(A1, -HB + 0.25, Z1), W(A1, HB - 0.25, Z1), W(A0, HB - 0.25, Z0)], shade(RED, 1.25));
-    for (const a of [7.7, 7.95, 8.2, 8.45]) poly([W(a, -HB - 0.01, 1.4), W(a + 0.12, -HB - 0.01, 1.4), W(a + 0.12, -HB - 0.01, 1.85), W(a, -HB - 0.01, 1.85)], shade(RED, 0.6), false);
-    poly([W(A1, -HB, 0.95), W(A1, HB, 0.95), W(A1, HB, Z1 - 0.25), W(A1, HB - 0.25, Z1), W(A1, -HB + 0.25, Z1), W(A1, -HB, Z1 - 0.25)], shade(RED, 1.05));
-    poly([W(A1 + 0.02, -0.68, 1.05), W(A1 + 0.02, 0.68, 1.05), W(A1 + 0.02, 0.68, 2.0), W(A1 + 0.02, -0.68, 2.0)], CHR);   // maska
-    for (let k = 1; k < 9; k++) { const b = -0.68 + k * 1.36 / 9; line(W(A1 + 0.03, b, 1.1), W(A1 + 0.03, b, 1.95), '#7d848e', Math.max(1, u * 0.25)); }
+    box(2.9, 4.9, -1.15, -0.95, 1.12, 1.22, 'frame', 0.4);
+    box(5.36, 5.54, 1.28, 1.46, 1.2, 4.4, 'chrome', 0.55);                          // vzdálený výfuk
+    box(4.0, 5.5, -1.25, 1.25, 0.95, 3.75, 'red', 0.45, 3.75, false);               // spací nástavba
+    poly([P(4.3, -1.26, 2.65), P(5.2, -1.26, 2.65), P(5.2, -1.26, 3.05), P(4.3, -1.26, 3.05)], 'glass', 0.45);
+    box(5.5, 6.9, -1.25, 1.25, 0.95, 3.3, 'red', 0.45);                             // kabina
+    poly([P(6.9, -1.12, 2.35), P(6.9, 1.12, 2.35), P(6.9, 1.12, 3.15), P(6.9, -1.12, 3.15)], 'glass', 0.7);
+    poly([P(5.75, -1.26, 2.3), P(6.7, -1.26, 2.3), P(6.7, -1.26, 3.05), P(5.75, -1.26, 3.05)], 'glass', 0.5);
+    box(6.85, 7.15, -1.25, 1.25, 3.3, 3.42, 'frame', 0.3);                          // stínítko
+    for (const b of [-0.9, 0, 0.9]) box(6.9, 7.05, b - 0.08, b + 0.08, 3.42, 3.52, 'orange', 0.7);
+    box(5.36, 5.54, -1.46, -1.28, 1.2, 4.4, 'chrome', 0.55);                        // bližší výfuk
+    cyl(5.55, 6.75, -1.12, 0.78, 0.33, 'chrome', 12);                               // nádrž
+    cyl(6.9, 7.45, -1.0, 2.0, 0.27, 'chrome', 12);                                  // vzduchový filtr
+    const HB = 0.85, A0 = 6.9, A1 = 9.5, Z0 = 2.35, Z1 = 2.1;                       // dlouhá kapota
+    poly([P(A0, -HB, 0.95), P(A1, -HB, 0.95), P(A1, -HB, Z1 - 0.25), P(A0, -HB, Z0 - 0.25)], 'red', 0.45);
+    poly([P(A0, -HB, Z0 - 0.25), P(A1, -HB, Z1 - 0.25), P(A1, -HB + 0.25, Z1), P(A0, -HB + 0.25, Z0)], 'red', 0.65);
+    poly([P(A0, -HB + 0.25, Z0), P(A1, -HB + 0.25, Z1), P(A1, HB - 0.25, Z1), P(A0, HB - 0.25, Z0)], 'red', 0.82);
+    poly([P(A1, -HB, 0.95), P(A1, HB, 0.95), P(A1, HB, Z1 - 0.25), P(A1, HB - 0.25, Z1), P(A1, -HB + 0.25, Z1), P(A1, -HB, Z1 - 0.25)], 'red', 0.6);
+    poly([P(A1 + 0.02, -0.68, 1.05), P(A1 + 0.02, 0.68, 1.05), P(A1 + 0.02, 0.68, 2.0), P(A1 + 0.02, -0.68, 2.0)], 'chrome', 0.7);   // maska
     wheel(8.35, -1.0);
-    const fen = [W(7.45, -1.08, 0.95)];
-    for (let k = 0; k <= 12; k++) { const f = Math.PI - k / 12 * Math.PI; fen.push(W(8.35 + 0.78 * Math.cos(f), -1.08, 0.55 + 0.78 * Math.sin(f))); }
-    fen.push(W(9.45, -1.08, 0.95), W(9.45, -1.08, 1.15));
-    for (let k = 0; k <= 10; k++) { const f = k / 10 * Math.PI; fen.push(W(8.45 + Math.cos(f), -1.08, 0.75 + 0.55 * Math.sin(f))); }
-    poly(fen, shade(RED, 0.95));                                                     // oblý přední blatník
-    poly([W(9.45, -1.15, 0.85), W(9.45, -0.75, 0.85), W(9.45, -0.75, 1.3), W(9.45, -1.15, 1.2)], shade(RED, 1.05));
-    for (const b of [-0.95, 0.95]) poly(ell(9.47, b, 1.45, 0.15, 10), '#fff6c8');       // světlomety
-    box(9.5, 9.85, -1.2, 1.2, 0.5, 0.92, CHR);                                       // nárazník
-    // ukazatel piva
-    if (tk.state === 'drink' || tk.state === 'leave') {
-      const [tx, ty] = W(-1.8, 0, ZC + RAD + 0.6);
+    const fen = [P(7.45, -1.08, 0.95)];
+    for (let i = 0; i <= 10; i++) { const t = Math.PI - i / 10 * Math.PI; fen.push(P(8.35 + 0.78 * Math.cos(t), -1.08, 0.55 + 0.78 * Math.sin(t))); }
+    fen.push(P(9.45, -1.08, 0.95), P(9.45, -1.08, 1.2));
+    for (let i = 0; i <= 8; i++) { const t = i / 8 * Math.PI; fen.push(P(8.45 + Math.cos(t), -1.08, 0.75 + 0.55 * Math.sin(t))); }
+    poly(fen, 'red', 0.5);                                                          // oblý přední blatník
+    for (const b of [-0.95, 0.95]) poly(ell(9.47, b, 1.45, 0.16, 8), 'lamp', 0.6);  // světlomety
+    box(9.5, 9.85, -1.2, 1.2, 0.5, 0.92, 'chrome', 0.55);                           // nárazník
+  }
+  function drawTanker(p, S, u, now) {
+    const P = p.party, tk = P.tanker, L = p.layout, cy = streetY(L, tk.x) - 0.3;
+    const spr = vehSprite('tanker', vehBasis(p), tankerGeom, (api) => vehText(api, 'RADEGAST 12°', -1.4, Math.PI * 172 / 180, T_RAD, T_ZC, '#0c3214'));
+    drawSprite(spr, S, tk.x, cy);
+    const { W } = vehKit(L, S, u, tk.x);
+    if (tk.state !== 'drink' && Math.random() < 0.3) { const [sx, sy] = W(5.45, -1.37, 4.5); P.smoke.push({ x: sx, y: sy, a: 0.3 }); }
+    if (tk.state === 'drink' || tk.state === 'leave') {                         // ukazatel piva
+      const [tx, ty] = W(-1.8, 0, T_ZC + T_RAD + 0.6);
       drawBubble(tx, ty, tk.beer > 0 ? `Zbývá ${Math.ceil(tk.beer * 100) * 100} l` : 'PRÁZDNO', Math.max(10, Math.round(u * 2.6)), tk.beer <= 0);
     }
   }
-  // růžový americký kabriolet ze 60. let (ploutve, chrom, bílé kůže) s tanečnicemi
-  function drawCar(p, S, u, now, night) {
-    const P = p.party, car = P.car, { W, poly, line, box, ell, wheel } = vehKit(p.layout, S, u, car.x);
-    const PINK = '#ff6fb5', PK2 = shade(PINK, 0.82), CHR = '#e3e6ea', SEAT = '#f6f0e4', IN = '#8a1f4d';
-    const fin = (b) => poly([W(-2.95, b, 0.8), W(-2.95, b, 1.28), W(-2.6, b, 1.22), W(-1.5, b, 0.82)], b > 0 ? PK2 : PINK);
-    fin(0.92);                                                                        // vzdálená ploutev
-    poly([W(-2.95, -1.0, 0.82), W(2.95, -1.0, 0.82), W(2.95, 1.0, 0.82), W(-2.95, 1.0, 0.82)], shade(PINK, 1.15));   // horní plocha
-    poly([W(-1.7, -0.82, 0.83), W(0.85, -0.82, 0.83), W(0.85, 0.82, 0.83), W(-1.7, 0.82, 0.83)], IN);             // otevřená kabina
-    box(-1.65, -1.45, -0.8, 0.8, 0.83, 1.22, SEAT);                                   // zadní lavice
-    box(-0.25, -0.05, -0.8, 0.8, 0.83, 1.18, SEAT);                                   // přední sedadla
-    const seats = [[-0.95, 0.42], [-0.95, -0.42], [0.35, -0.42]];                    // od nejvzdálenější
-    car.riders.forEach((k, i) => {
-      const [a, b] = seats[i] || seats[0], [X, Y] = W(a, b, 0);
-      drawPerson(X, Y, u, k, car.state === 'park' ? 'stand' : 'cheer', now / 1000 + i, { night, ph: i, noShadow: true });
+  // růžový americký kabriolet ze 60. let (ploutve, chrom, bílé sedačky) s tanečnicemi
+  function carGeom(api) {
+    const { P, poly, box, ell, wheel } = api;
+    const fin = (b, br) => poly([P(-2.95, b, 0.8), P(-2.95, b, 1.3), P(-2.55, b, 1.22), P(-1.5, b, 0.82)], 'pink', br);
+    fin(0.92, 0.35);
+    poly([P(-2.95, -1.0, 0.82), P(2.95, -1.0, 0.82), P(2.95, 1.0, 0.82), P(-2.95, 1.0, 0.82)], 'pink', 0.82);
+    poly([P(-1.7, -0.82, 0.83), P(0.85, -0.82, 0.83), P(0.85, 0.82, 0.83), P(-1.7, 0.82, 0.83)], 'inter', 0.4);
+    box(-1.65, -1.45, -0.8, 0.8, 0.83, 1.25, 'seat', 0.5);
+    box(-0.25, -0.05, -0.8, 0.8, 0.83, 1.2, 'seat', 0.5);
+    poly([P(-2.95, -1.0, 0.32), P(2.95, -1.0, 0.32), P(2.95, -1.0, 0.82), P(-2.95, -1.0, 0.82)], 'pink', 0.5);
+    poly([P(-2.95, -1.01, 0.52), P(2.95, -1.01, 0.52), P(2.95, -1.01, 0.62), P(-2.95, -1.01, 0.62)], 'seat', 0.85);   // bílý pruh
+    poly([P(2.95, -1.0, 0.32), P(2.95, 1.0, 0.32), P(2.95, 1.0, 0.82), P(2.95, -1.0, 0.82)], 'pink', 0.62);
+    poly([P(2.96, -0.6, 0.4), P(2.96, 0.6, 0.4), P(2.96, 0.6, 0.68), P(2.96, -0.6, 0.68)], 'chrome', 0.65);           // maska
+    for (const b of [-0.78, 0.78]) poly(ell(2.97, b, 0.62, 0.13, 8), 'lamp', 0.6);
+    fin(-1.0, 0.55);
+    for (const a of [1.85, -1.95]) wheel(a, -1.0, 0.36);
+    box(2.95, 3.15, -1.05, 1.05, 0.26, 0.42, 'chrome', 0.55);
+    poly([P(0.85, -0.85, 0.83), P(0.85, 0.85, 0.83), P(0.6, 0.85, 1.32), P(0.6, -0.85, 1.32)], 'glass', 0.75);        // čelní sklo
+  }
+  // sedící tanečnice nad hranou karoserie (pixely spritu): trup 3×4, hlava, ruce; v plavkách proužky místo šatů
+  function carRiders(api, riders, wave) {
+    const seats = [[-0.95, 0.42], [-0.95, -0.42], [0.35, -0.42]];
+    riders.forEach((k, i) => {
+      const [a, b] = seats[i] || seats[0], [x, y] = api.S(a, b, 0.83), up = (wave + i) % 2 === 0;
+      const rows = k.bikini ? { 1: '..BBB..', 2: '..SSS..', 3: 'S.BBB.S', 4: 'S.SSS.S' } : { 1: '..DDD..', 2: '..DDD..', 3: 'S.DDD.S', 4: 'S.DDD.S' };
+      rows[5] = up ? 'S.SSS.S' : '..SSS..'; rows[6] = up ? 'SHSSSHS' : '.HSSSH.'; rows[7] = '..HHH..';
+      const cm = { D: hexRgb(k.shirt), S: hexRgb(k.skin), H: hexRgb(k.hair), B: hexRgb(k.bik || '#ffd23f') };
+      for (const [dy, r] of Object.entries(rows)) [...r].forEach((ch, j) => { if (cm[ch]) api.set(x - 3 + j, y - +dy, cm[ch]); });
     });
-    // bok, čelo, ploutev a chrom (přes spodní polovinu postav)
-    poly([W(-2.95, -1.0, 0.32), W(2.95, -1.0, 0.32), W(2.95, -1.0, 0.82), W(-2.95, -1.0, 0.82)], PINK);
-    poly([W(-2.95, -1.01, 0.52), W(2.95, -1.01, 0.52), W(2.95, -1.01, 0.6), W(-2.95, -1.01, 0.6)], '#fff4fa', false);   // bílý pruh
-    line(W(-2.95, -1.02, 0.72), W(2.7, -1.02, 0.72), CHR, Math.max(1, u * 0.3));
-    poly([W(2.95, -1.0, 0.32), W(2.95, 1.0, 0.32), W(2.95, 1.0, 0.82), W(2.95, -1.0, 0.82)], shade(PINK, 1.05));
-    poly([W(2.96, -0.6, 0.4), W(2.96, 0.6, 0.4), W(2.96, 0.6, 0.66), W(2.96, -0.6, 0.66)], CHR);                     // maska
-    for (const b of [-0.78, 0.78]) poly(ell(2.97, b, 0.62, 0.12, 8), '#fff6c8');                                      // světla
-    fin(-1.0);
-    for (const a of [1.85, -1.95]) { wheel(a, -1.0, 0.36); poly([W(a - 0.5, -1.02, 0.32), W(a + 0.5, -1.02, 0.32), W(a + 0.42, -1.02, 0.55), W(a - 0.42, -1.02, 0.55)], PK2, false); }
-    box(2.95, 3.15, -1.05, 1.05, 0.28, 0.42, CHR);                                    // nárazník
-    // šikmé čelní sklo
-    poly([W(0.85, -0.85, 0.83), W(0.85, 0.85, 0.83), W(0.6, 0.85, 1.3), W(0.6, -0.85, 1.3)], 'rgba(170,215,240,0.55)');
-    if (car.honk > P.T) { const [hx, hy] = W(1.5, 0, 1.6); drawBubble(hx, hy, 'TÚ TÚ!', Math.max(10, Math.round(u * 2.6)), true); }
+  }
+  function drawCar(p, S, u, now, night) {
+    const P = p.party, car = P.car, L = p.layout, wave = car.state === 'park' ? 0 : Math.floor(now / 350) % 2;
+    const sig = car.riders.map((k) => k.shirt + (k.bikini ? 'b' : '')).join('|');
+    const spr = vehSprite(`car|${sig}|${sig ? wave : 0}`, vehBasis(p), carGeom, (api) => carRiders(api, car.riders, wave));
+    drawSprite(spr, S, car.x, streetY(L, car.x) - 0.3);
+    if (car.honk > P.T) { const { W } = vehKit(L, S, u, car.x); const [hx, hy] = W(1.5, 0, 1.6); drawBubble(hx, hy, 'TÚ TÚ!', Math.max(10, Math.round(u * 2.6)), true); }
   }
   function drawProps(p, S, u, now, night, items) {
     const P = p.party, L = p.layout, t = now / 1000;
@@ -2845,6 +2942,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
       const S = (dx, dy, dz = 0) => { const x = p.x + dx, y = p.y + dy, h = gz(x, y) + dz, q = toImg(x, y, h); return [Math.round(ox + q[0] * sx), Math.round(oy + q[1] * sx)]; };
       S.d = (dx, dy) => depth(p.x + dx, p.y + dy, gz(p.x + dx, p.y + dy));
       S.h26 = Math.round((S(0, 0)[1] - S(0, 0, 2.6)[1]));
+      S.sx = sx;
       const H = P ? P.host : { x: 0, y: 0 };
       const [X, Y] = P ? S(H.x, H.y) : [X0, Y0];
       const hurt = (o) => P && o.hit && P.T - o.hit < 2.2;
