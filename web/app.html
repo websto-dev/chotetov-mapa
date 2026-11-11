@@ -2336,7 +2336,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
                          // cisterna zdola (od Benátek) po hlavní silnici, na křižovatce doleva; kabriolet shora (od Mladé Boleslavi), doprava
                          tanker_route: [[68.1, -125.4], [38.5, -33.2], [34.1, -19.3], [-142.9, 1.8], [-153.5, 5.6]], tanker_from: 75,
                          car_route: [[2.9, 84.2], [6.7, 72.2], [19.7, 28.6], [32.9, -15.5], [34.1, -19.3], [-142.9, 1.8], [-153.5, 5.6]], car_from: 70,
-                         cross: [34.1, -19.3] };
+                         police_stop: -2, cross: [34.1, -19.3] };
   const PAL = { shirt: ['#2f7dc0', '#e3b505', '#3a9a5b', '#8e44ad', '#e67e22', '#ecf0f1', '#d35d8f', '#16a085', '#34495e', '#c0392b'],
                 pants: ['#3b5b8c', '#2c2c34', '#6b4f2a', '#4a4f57', '#1f3d5c', '#7a6a55'],
                 hair: ['#5a3b22', '#1e1a18', '#c9a14a', '#8a4b2a', '#b8b8b8', '#3a2a1e'], skin: ['#e8c6a4', '#d9ad84', '#f0d2b4', '#b98a62'] };
@@ -2392,6 +2392,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     const L = p.layout = { ...PARTY_LAYOUT, ...(p.party_layout || {}) };
     const guests = [];
     L.rt = makeRoute(L, L.tanker_route, L.tanker_from, L.tanker_stop); L.rc = makeRoute(L, L.car_route, L.car_from, L.car_stop);
+    L.rp = makeRoute(L, L.tanker_route, L.tanker_from, L.police_stop);
     for (let i = 0; i < 5; i++) {
       const skirt = Math.random() < 0.4;
       const g = { look: { shirt: ppick(PAL.shirt), pants: skirt ? ppick(['#c0392b', '#2c3e50', '#8e44ad', '#16a085']) : ppick(PAL.pants), hair: ppick(PAL.hair), skin: ppick(PAL.skin), skirt, long: skirt && Math.random() < 0.7 },
@@ -2399,7 +2400,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
       [g.tx, g.ty] = spot(L, 'dance'); guests.push(g);
     }
     let tempo = 1; try { tempo = +localStorage.getItem('izo-party-tempo') || 1; } catch {}   // ladění scénáře
-    p.party = { T: 0, tempo, phase: 'party', guests, extra: [], pig: 0, smoke: [], notes: [], clothes: [], tanker: null, car: null,
+    p.party = { T: 0, tempo, phase: 'party', guests, extra: [], pig: 0, smoke: [], notes: [], clothes: [], clouds: [], tanker: null, car: null, police: null,
                 host: { x: 0, y: 0, tx: 0, ty: 0, say: null } };
   }
   function spot(L, kind) {
@@ -2410,8 +2411,8 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     return [L.dance[0] + Math.cos(a) * r, L.dance[1] + Math.sin(a) * r * 0.7];
   }
   const say = (P, who, text, secs = 2.5) => { who.say = { text, until: P.T + secs }; };
-  const SPEED = { arrive: 1.3, go: 1.3, 'go-keg': 1.3, 'go-bush': 3.2, 'go-tanker': 3.4, flee: 3.8, home: 1.4, walk: 1.2, charge: 3.0, chase: 3.3, 'to-car': 3.8 };
-  const DONE = { 'go-keg': 'tap', 'go-bush': 'vomit', arrive: 'dance', 'go-tanker': 'tdrink', flee: 'gone', home: 'gone', charge: 'angry', chase: 'smack', 'to-car': 'incar' };
+  const SPEED = { arrive: 1.3, go: 1.3, 'go-keg': 1.3, 'go-bush': 3.2, 'go-tanker': 3.4, flee: 3.8, home: 1.4, walk: 1.2, charge: 3.0, chase: 3.3, 'to-car': 3.8, nab: 3.0, escort: 1.1, board: 1.2, cuffed: 1.25, rowdy: 1.0 };
+  const DONE = { 'go-keg': 'tap', 'go-bush': 'vomit', arrive: 'dance', 'go-tanker': 'tdrink', flee: 'gone', home: 'gone', charge: 'angry', chase: 'smack', 'to-car': 'incar', nab: 'grab', escort: 'loaded', board: 'incar', cuffed: 'cuffed', rowdy: 'rowdy' };
   function moveActor(a, dt) {                                           // true = ještě jde
     const v = SPEED[a.state]; if (!v) return false;
     const dx = a.tx - a.x, dy = a.ty - a.y, dl = Math.hypot(dx, dy);
@@ -2420,7 +2421,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     a.dur = a.state === 'tap' ? 3 : a.state === 'vomit' ? 3.5 : 6 + Math.random() * 10;
     return false;
   }
-  const partyFree = (P) => !!P && P.phase === 'party' && !P.tanker && !P.car;
+  const partyFree = (P) => !!P && P.phase === 'party' && !P.tanker && !P.car && !P.police;
   // Faktor pařby 4: cisterna Radegast přijede zespoda (od západu, „od Benátek“), zastaví před domem a všichni ji vypijí
   function startTanker(p) {
     const P = p.party; if (!partyFree(P)) return;
@@ -2429,6 +2430,13 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
   }
   // Faktor pařby 5: růžový kabriolet s tanečnicemi
   const GIRLS = [{ dress: '#ff3fa4', hair: '#f2d16b', bik: '#ffd23f' }, { dress: '#b03bff', hair: '#1e1a18', bik: '#ff3fa4' }, { dress: '#ffd23f', hair: '#c0392b', bik: '#2fd0ff' }];
+  // Ukončit párty: zespoda přijede policie, dva policisté nabádají ke klidu, opilci dělají bordel, dva zatknou a naloží,
+  // zbytek se rozprchne, policisté zapnou majáky a odjedou; kamarád zůstane doma
+  const COP = { shirt: '#2b4a80', pants: '#1c2740', hair: '#3a2a1e', cap: true, vest: true };
+  function startPolice(p) {
+    const P = p.party; if (!partyFree(P)) return;
+    P.phase = 'police'; P.police = { d: p.layout.rp.dStart, state: 'arrive', riders: 0 };
+  }
   function startStrip(p) {
     const P = p.party; if (!partyFree(P)) return;
     P.phase = 'strip'; P.stripT = null; P.wivesOut = false; P.clothes = [];
@@ -2547,6 +2555,51 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
         });
       }
     }
+    // ---- policie ----
+    const pol = P.police, cops = P.extra.filter((e) => e.kind === 'policista');
+    if (pol) {
+      const pf = () => carPose(L.rp, pol.d);
+      if (pol.state === 'arrive') {
+        if (L.rp.dStop - pol.d < 45 && !pol.seen) { pol.seen = true; say(P, H, 'Ajaj… policajti.', 2.5); }
+        if (driveIn(pol, L.rp, dt, 11)) {
+          pol.state = 'park'; pol.t0 = P.T; const cf = pf();
+          [[-0.6, -1.4], [1.2, 1.4]].forEach(([a, dx], i) => P.extra.push({ kind: 'policista', look: { ...COP, skin: ppick(PAL.skin), hair: ppick(PAL.hair) },
+            x: vpt(cf, a, 1.4)[0], y: vpt(cf, a, 1.4)[1], state: 'walk', next: 'stop', tx: L.dance[0] + dx, ty: L.dance[1] - 3.2, ph: i, t: 0, wait: i * 0.5 }));
+          for (const g of everyone()) { const a = Math.random() * Math.PI * 2; g.state = 'go'; g.next = 'rowdy'; g.tx = L.dance[0] + Math.cos(a) * 2.6; g.ty = L.dance[1] + 0.8 + Math.sin(a) * 1.8; }
+        }
+      } else if (pol.state === 'park') {
+        const el = P.T - pol.t0, c0 = cops[0], c1 = cops[1];
+        if (el > 3 && !pol.s1) { pol.s1 = true; say(P, c0, 'Dobrý večer, policie!', 2.8); }
+        if (el > 6 && !pol.s2) { pol.s2 = true; say(P, c1, 'Ztlumte to, prosím!', 2.8); }
+        if (el > 3 && el < 13 && Math.random() < dt * 1.6) { const r = everyone().filter((g) => g.state === 'rowdy'); if (r.length) say(P, ppick(r), ppick(['Já jsem v klidu!', 'Hik!', 'Ještě jedno!', 'Co je?!', 'Pusťte hudbu!', 'Na zdraví, páni!', 'Já nic!']), 1.6); }
+        if (el > 9 && el < 10 && !pol.s3) { pol.s3 = true; say(P, c1, 'Prosím o klid!', 2.5); }
+        if (el > 13 && !pol.nab) {                                       // tak dost: každý policista si vezme jednoho výtečníka
+          pol.nab = true; say(P, c0, 'Tak dost!', 2); say(P, H, 'Už budu hodnej…', 3);
+          const pool = everyone().filter((g) => g.state === 'rowdy').sort(() => Math.random() - 0.5);
+          cops.forEach((c, i) => { const v = pool[i]; if (v) { c.target = v; v.nabbed = true; c.state = 'nab'; } else c.state = 'board'; });
+        }
+        for (const c of cops) {
+          const v = c.target, cf = pf();
+          if (c.state === 'nab' && v) { c.tx = v.x + 0.7; c.ty = v.y - 0.2; }
+          if (c.state === 'grab' && v) {
+            if (!v.hit) {
+              v.hit = P.T; P.clouds.push({ x: (v.x + c.x) / 2, y: (v.y + c.y) / 2, t0: P.T }); v.state = 'cuffed-wait'; v.beer = false;
+              say(P, v, ppick(['Pusťte mě!', 'Au, au!', 'Já nic neudělal!']), 1.8); say(P, c, 'Pojďte s námi!', 1.8);
+              for (const g of everyone()) if (!g.nabbed && g.state !== 'flee') { g.state = 'flee'; g.tx = (Math.random() < 0.5 ? -1 : 1) * (24 + Math.random() * 8); g.ty = streetY(L, g.tx) - 0.5; g.beer = false; }
+            }
+            if (c.t > 1.5) { c.state = 'escort'; [c.tx, c.ty] = vpt(cf, -1.0 + cops.indexOf(c) * 0.9, 1.5); v.state = 'cuffed'; }
+          }
+          if (c.state === 'escort' && v) { v.tx = c.x - 0.5; v.ty = c.y + 0.35; if (v.state !== 'cuffed') v.state = 'cuffed'; }
+          if (c.state === 'loaded') { if (v) { v.state = 'incar'; pol.riders++; } c.target = null; c.state = 'board'; [c.tx, c.ty] = vpt(cf, 0.2 - cops.indexOf(c) * 1.4, 1.3); }
+        }
+        if (pol.nab && cops.length && cops.every((c) => c.state === 'incar')) {
+          pol.state = 'leave'; pol.siren = P.T; P.extra = P.extra.filter((e) => e.kind !== 'policista');
+        }
+      } else if (pol.state === 'leave') {
+        if (driveOut(pol, L.rp, dt, 13)) P.police = null;
+      }
+      if (!P.police && P.guests.every((g) => g.state === 'gone' || g.state === 'incar' || g.wait > 0)) { p.party = null; partyEnded(p); return; }
+    }
     // ---- pohyb ----
     { const dx = H.tx - H.x, dy = H.ty - H.y, dl = Math.hypot(dx, dy); H.moving = dl > 0.15; if (H.moving) { const v = P.phase === 'tanker' ? 3 : 1.8; H.x += dx / dl * Math.min(dl, v * dt); H.y += dy / dl * Math.min(dl, v * dt); } }
     for (const e of P.extra) { e.t += dt; if (e.wait > 0) { e.wait -= dt; continue; } moveActor(e, dt); }
@@ -2587,7 +2640,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
       R(2, 1, 3, 1, '#8fb339');                                        // loužička
       return;
     }
-    const step = pose === 'walk' || pose === 'run' ? (Math.sin(t * (pose === 'run' ? 18 : 10)) > 0 ? 1 : -1) : 0;
+    const step = pose === 'walk' || pose === 'run' || pose === 'cuffed' ? (Math.sin(t * (pose === 'run' ? 18 : 10)) > 0 ? 1 : -1) : 0;
     R(-2, 1, 2, 1, k.dancer ? '#d4145a' : OUTC); R(0, 1, 2, 1, k.dancer ? '#d4145a' : OUTC);
     if (k.bikini) {                                                     // plavky
       R(-2, 4, 2, 3, SK); R(0, 4, 2, 3, SK2); R(-2, 8, 4, 4, SK); R(1, 8, 1, 4, SK2);
@@ -2604,7 +2657,9 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
       if (k.dancer && Math.floor(t * 6) % 2) R(-1, 7, 1, 1, '#fff6c0'); else if (k.dancer) R(0, 6, 1, 1, '#fff6c0');   // třpytky
     }
     if (k.boa) { R(-3, 8, 6, 1, '#ff8ad8'); R(-3, 7, 1, 1, '#ff8ad8'); R(2, 7, 1, 1, '#ff8ad8'); }
+    if (k.vest) { R(-2, 7, 4, 1, D('#d8f23a')); R(-2, 6, 4, 1, D('#c9cfd6')); }        // reflexní pruh policisty
     R(-1, 10, 2, 2, SK); R(-1, 10, 2, 1, HA); if (k.long || k.hairLong) R(-2, 10, 1, 3, HA); if (k.hairLong) R(1, 10, 1, 3, HA);
+    if (k.cap) { R(-1, 11, 2, 1, D('#1c2740')); R(-2, 10, 4, 1, D('#141c30')); R(0, 11, 1, 1, D('#e0c040')); }   // služební čepice
     if (k.apron) R(-1, 11, 2, 1, D(shade(k.hair, 1.1)));                // drdol
     // zbraň manželky: váleček, koště, pánev; (hx, hy) je ruka, dir 'up' nad hlavou, 'fwd' vodorovně dopředu
     const weapon = (hx, hy, dir) => {
@@ -2619,10 +2674,13 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     else if (pose === 'cheer') { R(-3, 11, 1, 3, SL); R(-3, 12, 1, 1, SK); }
     else if (pose === 'hurt') { R(-3, 11, 1, 3, SL); R(-2, 12, 1, 1, SK); }   // ruce na hlavě
     else if (pose === 'dance') { const up = Math.sin(t * 4.5 + o.ph) > 0; R(-3, up ? 11 : 8, 1, 3, SL); R(-3, up ? 12 : 5, 1, 1, SK); }
-    else if (pose === 'angry' || pose === 'smack') { R(-3, 8, 1, 2, SL); R(-2, 7, 1, 1, SK); }   // ruka v bok
+    else if (pose === 'angry' || pose === 'smack' || pose === 'stop') { R(-3, 8, 1, 2, SL); R(-2, 7, 1, 1, SK); }   // ruka v bok
+    else if (pose === 'cuffed') { R(-3, 8, 1, 2, SL); R(-2, 6, 4, 1, SL); R(-1, 6, 2, 1, '#c4c9d0'); }   // ruce v poutech
     else if (pose === 'run') { const sw = step > 0; R(-3, sw ? 9 : 8, 1, 2, SL); R(-3, sw ? 7 : 6, 1, 1, SK); }
     else { R(-3, 8, 1, 3, SL); R(-3, 5, 1, 1, SK); }
-    if (pose === 'drink') { R(2, 8, 1, 2, SL2); beerAt(1, 9); }
+    if (pose === 'cuffed') R(2, 8, 1, 2, SL2);
+    else if (pose === 'stop') { R(2, 9, 2, 1, SL2); R(4, 10, 1, 2, SK); }          // dlaň vpřed: klid!
+    else if (pose === 'drink') { R(2, 8, 1, 2, SL2); beerAt(1, 9); }
     else if (pose === 'tap') { R(2, 8, 2, 1, SL2); if (Math.floor(t * 2) % 2) beerAt(3, 7); }
     else if (pose === 'cheer') { R(2, 11, 1, 3, SL2); if (o.beer) beerAt(2, 13); else R(2, 12, 1, 1, SK); }
     else if (pose === 'hurt') { R(2, 11, 1, 3, SL2); R(1, 12, 1, 1, SK); }
@@ -2637,6 +2695,15 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     }
     else if (pose === 'run' && k.weapon) { R(2, 11, 1, 3, SL2); R(2, 12, 1, 1, SK); weapon(2, 13, 'up'); }
     else { R(2, 8, 1, 3, SL2); if (o.beer) { beerAt(2, 6); R(4, 6, 1, 1, '#c98f1a'); } else R(2, 5, 1, 1, SK); }
+  }
+  function drawCloud(X, Y, u, t) {                                     // kreslený mrak rvačky s hvězdičkami a končetinami
+    for (let i = 0; i < 9; i++) {
+      const a = i * 0.7 + Math.floor(t * 12) * 1.3, r = (2.5 + (i % 3)) * u, s = (3 + (i % 2) * 2) * u;
+      ctx.fillStyle = i % 2 ? '#e8e4dc' : '#c9c4ba'; ctx.fillRect(X + Math.cos(a) * r - s / 2, Y - 6 * u + Math.sin(a) * r * 0.6 - s / 2, s, s);
+    }
+    ctx.fillStyle = '#e8c6a4'; ctx.fillRect(X + (Math.floor(t * 9) % 2 ? 4 : -5) * u, Y - 8 * u, u, 3 * u);
+    ctx.fillStyle = '#2b4a80'; ctx.fillRect(X + (Math.floor(t * 9) % 2 ? -5 : 4) * u, Y - 5 * u, 3 * u, u);
+    drawStars(X, Y - 11 * u, u, t);
   }
   function drawStars(X, Y, u, t) {                                      // hvězdičky kolem hlavy po ráně
     for (let i = 0; i < 3; i++) {
@@ -2663,13 +2730,16 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     tire: ['#0b0c0f', '#17191d', '#2a2d33', '#3d4048', '#555a63'], frame: ['#121418', '#202328', '#30343a', '#454950', '#5c6169'],
     pink: ['#5e1236', '#a52a63', '#ef5fa8', '#ff93c8', '#ffd2ea'], seat: ['#857c6c', '#bdb29d', '#e6ddc9', '#f7f1e3', '#ffffff'],
     inter: ['#33091b', '#521029', '#7c1b45', '#9c3561', '#bb5582'], lamp: ['#8a7425', '#cdb447', '#f5e48a', '#fff6c8', '#ffffff'],
-    orange: ['#7a3d06', '#b8600c', '#f0921e', '#ffbb55', '#ffe0a0'] };
+    orange: ['#7a3d06', '#b8600c', '#f0921e', '#ffbb55', '#ffe0a0'],
+    silver: ['#4a5058', '#7d848e', '#b6bcc4', '#dde1e6', '#f6f8fa'], pblue: ['#0b1f4a', '#163a8a', '#2457c5', '#4f86e8', '#9cc0ff'],
+    pyel: ['#6e6200', '#a89800', '#dcd000', '#f2ee4a', '#fffba8'], beacon: ['#3a6cff', '#6f9bff', '#a9c6ff', '#e0ebff', '#ffffff'] };
   const VMATS = Object.keys(VRAMP), hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const VRGB = VMATS.map((m) => VRAMP[m].map(hexRgb));
   const VFONT = { R: ['110', '101', '110', '101', '101'], A: ['111', '101', '111', '101', '101'], D: ['110', '101', '101', '101', '110'],
                   E: ['111', '100', '110', '100', '111'], G: ['111', '100', '101', '101', '111'], S: ['011', '100', '010', '001', '110'],
                   T: ['111', '010', '010', '010', '010'], 1: ['010', '110', '010', '010', '111'], 2: ['110', '001', '010', '100', '111'],
-                  '°': ['11', '11', '00', '00', '00'], ' ': ['0', '0', '0', '0', '0'] };
+                  '°': ['11', '11', '00', '00', '00'], ' ': ['0', '0', '0', '0', '0'], P: ['110', '101', '110', '100', '100'],
+                  O: ['010', '101', '101', '101', '010'], L: ['100', '100', '100', '100', '111'], I: ['111', '010', '010', '010', '111'], C: ['011', '100', '100', '100', '011'] };
   const VCACHE = new Map();
   // osy vozu v obrazových px na metr (a dopředu ve směru h, b vpravo od řidiče, z nahoru) a jejich příspěvek k hloubce (větší = dál);
   // směr se zaokrouhlí na 3°, aby se obrázky daly znovu použít
@@ -2769,11 +2839,11 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     ctx.drawImage(spr.cv, Math.round(X - spr.ox * sc), Math.round(Y - spr.oy * sc), Math.round(spr.cv.width * sc), Math.round(spr.cv.height * sc));
   }
   // nápis malým pixelovým písmem na plášti válce; každý sloupec písma se posune podle sklonu osy vozu, čte se zleva doprava
-  function vehText(api, txt, a, th, rad, zc, dark) {
+  function vehText(api, txt, a, th, rad, zc, dark, sc) {
     const cols = [];
     for (const ch of txt) { const gl = VFONT[ch] || VFONT[' ']; for (let c = 0; c < gl[0].length; c++) cols.push(gl.map((r) => r[c] === '1')); cols.push([false, false, false, false, false]); }
     cols.pop();
-    const SC = api.K >= 9 ? 2 : 1, [xc, yc] = api.S(a, rad * Math.cos(th), zc + rad * Math.sin(th));
+    const SC = sc || (api.K >= 9 ? 2 : 1), [xc, yc] = api.S(a, rad * Math.cos(th), zc + rad * Math.sin(th));
     const [ax, ay] = api.proj(1, 0, 0), slope = ay / ax, tx0 = xc - Math.round(cols.length * SC / 2), ty0 = yc - SC;
     const pix = new Set(), key = (x, y) => x * 4096 + y;
     cols.forEach((col, i) => { const xcol = tx0 + i * SC, sh = Math.round((xcol - xc) * slope); col.forEach((on, r) => { if (on) for (let sx = 0; sx < SC; sx++) for (let sy = 0; sy < SC; sy++) pix.add(key(xcol + sx, ty0 + sh + r * SC + sy)); }); });
@@ -2873,6 +2943,35 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     drawSprite(vehSprite(`car${bs.key}|${sig}|${sig ? wave : 0}`, bs, carGeom, (api) => carRiders(api, car.riders, wave)), S, ...fr.o);
     if (car.honk > P.T) { const [x, y] = vpt(fr, 1.5, 0), [hx, hy] = S(x, y, 1.6); drawBubble(hx, hy, 'TÚ TÚ!', Math.max(10, Math.round(u * 2.6)), true); }
   }
+  // policejní kombi: stříbrné s modrožlutým pruhem, nápis POLICIE, majáky na střeše (lit: 0 zhasnuto, 1/2 střídavě)
+  function policeGeom(lit) {
+    return (api) => {
+      const { P, poly, poly2, box, ell, wheel } = api;
+      box(-2.35, 2.35, -0.9, 0.9, 0.3, 1.0, 'silver', 0.5, 0.9);                  // karoserie, kapota k přídi klesá
+      box(-2.25, 0.85, -0.82, 0.82, 1.0, 1.52, 'silver', 0.55);                   // kabina kombi
+      poly2([P(-2.05, -0.83, 1.06), P(0.7, -0.83, 1.06), P(0.7, -0.83, 1.44), P(-2.05, -0.83, 1.44)], 'glass', 0.5);
+      poly([P(0.86, -0.75, 1.04), P(0.86, 0.75, 1.04), P(0.86, 0.75, 1.46), P(0.86, -0.75, 1.46)], 'glass', 0.7);
+      poly([P(-2.26, -0.7, 1.08), P(-2.26, 0.7, 1.08), P(-2.26, 0.7, 1.42), P(-2.26, -0.7, 1.42)], 'glass', 0.45);
+      poly2([P(-2.35, -0.91, 0.44), P(2.35, -0.91, 0.44), P(2.35, -0.91, 0.74), P(-2.35, -0.91, 0.74)], 'pblue', 0.5);   // modrý pruh
+      poly2([P(-2.35, -0.91, 0.74), P(2.35, -0.91, 0.74), P(2.35, -0.91, 0.82), P(-2.35, -0.91, 0.82)], 'pyel', 0.6);   // žlutý pruh
+      for (const a of [1.5, -1.55]) wheel(a, 0.9, 0.33);
+      box(2.35, 2.47, -0.9, 0.9, 0.3, 0.5, 'frame', 0.4);
+      for (const b of [-0.62, 0.62]) poly(ell(2.36, b, 0.74, 0.1, 8).map(([a, bb, z]) => [2.36, b + (a - 2.36), z]), 'lamp', 0.6);
+      box(-0.55, 0.35, -0.6, 0.6, 1.52, 1.6, 'frame', 0.3);                       // rampa majáků
+      box(-0.5, 0.3, -0.58, -0.04, 1.6, 1.74, lit === 1 ? 'beacon' : 'pblue', lit === 1 ? 0.85 : 0.35);
+      box(-0.5, 0.3, 0.04, 0.58, 1.6, 1.74, lit === 2 ? 'beacon' : 'pblue', lit === 2 ? 0.85 : 0.35);
+    };
+  }
+  function drawPolice(p, S, u, now, night) {
+    const P = p.party, pol = P.police, fr = carPose(p.layout.rp, pol.d), bs = vehBasis(p, fr.h);
+    const lit = pol.state === 'leave' ? 1 + Math.floor(now / 220) % 2 : 0, th = bs.r[0] + bs.r[1] < 0 ? 0 : Math.PI;
+    drawSprite(vehSprite(`pol${bs.key}|${lit}`, bs, policeGeom(lit), (api) => vehText(api, 'POLICIE', -0.5, th, 0.92, 0.72, '#0b1f4a', 1)), S, ...fr.o);
+    if (lit) {                                                                  // modrá záře majáku
+      const [x, y] = vpt(fr, -0.1, lit === 1 ? -0.3 : 0.3), [gx, gy] = S(x, y, 1.7), r = (night > 0.3 ? 9 : 5) * u;
+      ctx.fillStyle = `rgba(70,130,255,${night > 0.3 ? 0.35 : 0.22})`; ctx.beginPath(); ctx.arc(gx, gy, r, 0, Math.PI * 2); ctx.fill();
+    }
+    if (pol.siren && P.T - pol.siren < 2.5) { const [x, y] = vpt(fr, 0.5, 0), [hx, hy] = S(x, y, 2.0); drawBubble(hx, hy, 'TÚÚ-TÚÚ!', Math.max(10, Math.round(u * 2.6)), true); }
+  }
   function drawProps(p, S, u, now, night, items) {
     const P = p.party, L = p.layout, t = now / 1000;
     const box = (X, Y, w, hh, c) => { ctx.fillStyle = c; ctx.fillRect(X, Y, w, hh); };
@@ -2920,6 +3019,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     if (P.tanker) { const ps = tankerPose(L.rt, P.tanker.d);
       for (const part of ['trl', 'cab']) { const fr = ps[part], c = vpt(fr, part === 'trl' ? -1.8 : 6.1, 0); items.push({ d: S.d(...c), f: () => drawTanker(p, S, u, now, part) }); } }
     if (P.car) { const c = carPose(L.rc, P.car.d).o; items.push({ d: S.d(...c), f: () => drawCar(p, S, u, now, night) }); }
+    if (P.police) { const c = carPose(L.rp, P.police.d).o; items.push({ d: S.d(...c), f: () => drawPolice(p, S, u, now, night) }); }
     // řetěz žárovek nad zahradou (2,6 m nad zemí)
     items.push({ d: -1e9, f: () => {
       const pts = L.lights.map(([a, b]) => S(a, b, 2.6)), cols = ['#ff5a5a', '#ffd23f', '#5ad1ff', '#7dff6a', '#ff8af2'];
@@ -2948,16 +3048,17 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     for (const n of P.notes) { ctx.font = `700 ${Math.max(10, Math.round(u * 3))}px ${DISPLAY_FONT}`; ctx.fillStyle = `rgba(27,34,51,${(1 - n.a).toFixed(2)})`; ctx.fillText(n.s, n.x, n.y); }
     ctx.textAlign = 'start';
   }
-  POSTAVY.click = (p) => {
-    goTo(p.ix, p.iy - 6, 4); p.wave = performance.now();
+  POSTAVY.click = (p) => { goTo(p.ix, p.iy - 6, 4); p.wave = performance.now(); postavaCard(p); };
+  function partyEnded(p) { if (p.btns && p.btns[0].offsetParent) postavaCard(p); }   // karta je otevřená: nabídnout novou párty
+  function postavaCard(p) {
     showCard({ title: p.nazev || 'Kamarád na pivu', text: p.party ? 'Párty je v plném proudu! Chceš jí přidat na obrátkách?' : 'Popíjí na předzahrádce. Nechceš se přidat?', rows: [], lon: p.lon, lat: p.lat });
     const mk = (txt, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'px-btn'; b.textContent = txt; b.addEventListener('click', fn); return b; };
     const links = $('cardLinks');
     if (!p.party) { p.btns = null; links.prepend(mk('🎉 Uspořádat párty', () => { partyStart(p); POSTAVY.click(p); })); return; }
-    const b4 = mk('🍺 Faktor pařby 4', () => startTanker(p)), b5 = mk('💃 Faktor pařby 5', () => startStrip(p));
-    links.prepend(b5); links.prepend(b4); links.prepend(mk('Ukončit párty', () => { p.party = null; POSTAVY.click(p); }));
-    p.btns = [b4, b5];
-  };
+    const b0 = mk('🚓 Ukončit párty', () => startPolice(p)), b4 = mk('🍺 Faktor pařby 4', () => startTanker(p)), b5 = mk('💃 Faktor pařby 5', () => startStrip(p));
+    links.prepend(b5); links.prepend(b4); links.prepend(b0);
+    p.btns = [b0, b4, b5];
+  }
   let postavyLast = 0;
   function drawPostavy(sx, ox, oy, now, night) {
     POSTAVY.drawn = [];
@@ -2992,7 +3093,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
         else if (H.moving) hostPose = P.phase === 'tanker' ? 'run' : 'walk';
         else if (P.phase === 'tanker' && P.tanker?.state === 'drink') hostPose = 'drink';
         else if (P.phase === 'strip') hostPose = 'cheer';
-        else if (P.phase === 'beat') hostPose = 'stand';
+        else if (P.phase === 'beat' || P.phase === 'police') hostPose = 'stand';
         else if (Math.sin(t * 0.4 + p.ph) > 0.3) hostPose = 'dance';
       }
       const hd = P ? S.d(H.x, H.y) : p.d;
@@ -3002,11 +3103,13 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
         if (H.say && H.say.until > P.T) talk.push([X, Y - 12 * u, H.say.text, H.say.text.includes('!') && H.say.text === H.say.text.toUpperCase()]);
         drawProps(p, S, u0, now, night, items);
         const POSE = { arrive: 'walk', 'go-keg': 'walk', 'go-bush': 'run', go: 'walk', walk: 'walk', home: 'walk', 'go-tanker': 'run', flee: 'run', charge: 'run', chase: 'run', 'to-car': 'run',
-                       tap: 'tap', vomit: 'vomit', dance: 'dance', cheer: 'cheer', tdrink: 'drink', angry: 'angry', smack: 'smack' };
+                       tap: 'tap', vomit: 'vomit', dance: 'dance', cheer: 'cheer', tdrink: 'drink', angry: 'angry', smack: 'smack',
+                       nab: 'run', grab: 'stop', stop: 'stop', escort: 'walk', board: 'walk', loaded: 'stand', cuffed: 'cuffed', 'cuffed-wait': 'cuffed' };
         for (const g of [...P.guests, ...P.extra]) {
           if (g.wait > 0 || g.state === 'gone' || g.state === 'incar') continue;
           const [gX, gY] = S(g.x, g.y);
-          let pose = g.state === 'drink' ? (Math.sin(t * 0.8 + g.ph) > 0.6 ? 'drink' : 'stand') : POSE[g.state] || 'stand';
+          let pose = g.state === 'drink' ? (Math.sin(t * 0.8 + g.ph) > 0.6 ? 'drink' : 'stand') : g.state === 'rowdy' ? (Math.sin(t * 0.9 + g.ph) > 0.2 ? 'dance' : 'drink') : POSE[g.state] || 'stand';
+          if (P.clouds.some((c) => P.T - c.t0 < 1.4 && Math.hypot(c.x - g.x, c.y - g.y) < 1.2)) continue;   // schovaní v mraku rvačky
           if (hurt(g) && pose !== 'run') pose = 'hurt';
           items.push({ d: S.d(g.x, g.y), f: () => drawPerson(gX, gY, u0, g.look, pose, t + g.ph, { night, beer: g.beer, ph: g.ph, st: g.t }) });
           if (hurt(g)) stars.push([gX, gY - 11.5 * u0, u0]);
@@ -3016,6 +3119,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
       items.sort((a, b) => b.d - a.d);
       for (const it of items) it.f();
       if (P) drawPartyFx(p, u0, dt);
+      if (P) for (const c of P.clouds) if (P.T - c.t0 < 1.4) drawCloud(...S(c.x, c.y), u0, t);
       for (const [sx2, sy2, su] of stars) drawStars(sx2, sy2, su, t);
       for (const [bx, by, text, loud] of talk) drawBubble(bx, by, text, Math.max(10, Math.round(u0 * 2.6)), loud);
       if (waving && p.text) drawBubble(X, Y - 14 * u, p.text, Math.max(11, Math.round(u * 3.2)));
