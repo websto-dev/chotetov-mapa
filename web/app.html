@@ -2318,10 +2318,12 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
   // vrstva s vozidly se kreslí ve stejné chvíli jako dlaždice (událost update-viewport), jinak by při posouvání mapy
   // o snímek zaostávala; když se mapa nehýbe, kreslí ji vlastní smyčka
   let osdT = -1e9, rafLast = performance.now();
-  // ---------- postavičky z mesto.json "postavy": [{"lat", "lon", "typ": "pivo", "text", "nazev", "party": {"dx", "dy"}}] ----------
+  // ---------- postavičky z mesto.json "postavy": [{"lat", "lon", "typ": "pivo", "text", "nazev", "party_layout": {…}}] ----------
   // Stojí na místě a popíjejí; po kliknutí se mapa přiblíží, postavička se zvětší, zamává a v kartě nabídne párty:
   // z ulice přijdou hosté, točí se pivo ze soudku, na grilu se peče sele, tancuje se a občas někdo odběhne ke keři.
-  // Párty je jen v prohlížeči návštěvníka (nic se neukládá) a polohy jsou v metrech od postavičky (x na východ, y na sever).
+  // Scénář: asi po minutě přijede cisterna s pivem a všichni ji vypijí, po dvou minutách přijdou tanečnice
+  // a hned nato vyjdou z domu manželky a párty rázně ukončí. Párty je jen v prohlížeči návštěvníka (nic se neukládá).
+  // Polohy jsou v metrech od postavičky (x na východ, y na sever); "ulice": [x0, y0, x1, y1] je osa silnice před domem.
   var POSTAVY = { list: ({{POSTAVY}} || []).map((p) => {
     const x = (p.lon - cam.lon0) * cam.kx, y = (p.lat - cam.lat0) * cam.ky, h = gz(x, y);
     const [ix, iy] = toImg(x, y, h);
@@ -2329,22 +2331,26 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
   }), drawn: [] };
   POSTAVY.hitAt = (mx, my) => POSTAVY.drawn.find((q) => Math.abs(q[0] - mx) < q[3] * 0.6 + 6 && my < q[1] + 6 && my > q[1] - q[3] - 6)?.[2];
   const PARTY_LAYOUT = { keg: [-3.5, 1.8], grill: [5, -1.5], speaker: [2.6, 2.4], dance: [0.8, -4.6], bush: [-6.5, -7], street: [0.5, -15],
-                         lights: [[-5.5, 3], [-5.5, -8.5], [7.5, -8.5], [7.5, 3]] };
+                         door: [0.5, 5], lights: [[-5.5, 3], [-5.5, -8.5], [7.5, -8.5], [7.5, 3]], ulice: [-143, 1.8, 34, -19.3], tanker_stop: -1 };
   const PAL = { shirt: ['#2f7dc0', '#e3b505', '#3a9a5b', '#8e44ad', '#e67e22', '#ecf0f1', '#d35d8f', '#16a085', '#34495e', '#c0392b'],
                 pants: ['#3b5b8c', '#2c2c34', '#6b4f2a', '#4a4f57', '#1f3d5c', '#7a6a55'],
                 hair: ['#5a3b22', '#1e1a18', '#c9a14a', '#8a4b2a', '#b8b8b8', '#3a2a1e'], skin: ['#e8c6a4', '#d9ad84', '#f0d2b4', '#b98a62'] };
   const ppick = (a) => a[Math.floor(Math.random() * a.length)];
   const shade = (hex, f) => '#' + [1, 3, 5].map((i) => Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(i, i + 2), 16) * f))).toString(16).padStart(2, '0')).join('');
+  const T_TANKER = 60, T_STRIP = 120, T_WIVES = 135;              // scénář v sekundách od začátku párty
+  function streetY(L, x) { const [x0, y0, x1, y1] = L.ulice; return y0 + (x - x0) * (y1 - y0) / (x1 - x0); }
   function partyStart(p) {
     const L = p.layout = { ...PARTY_LAYOUT, ...(p.party_layout || {}) };
     const guests = [];
     for (let i = 0; i < 9; i++) {
       const skirt = Math.random() < 0.4;
-      guests.push({ look: { shirt: ppick(PAL.shirt), pants: skirt ? ppick(['#c0392b', '#2c3e50', '#8e44ad', '#16a085']) : ppick(PAL.pants), hair: ppick(PAL.hair), skin: ppick(PAL.skin), skirt, long: skirt && Math.random() < 0.7 },
-        x: L.street[0] + (Math.random() - 0.5) * 3, y: L.street[1] - i * 1.6, tx: 0, ty: 0, state: 'arrive', t: 0, wait: i * 1.4, ph: Math.random() * 6, beer: Math.random() < 0.6 });
-      const g = guests[i]; [g.tx, g.ty] = spot(L, 'dance');
+      const g = { look: { shirt: ppick(PAL.shirt), pants: skirt ? ppick(['#c0392b', '#2c3e50', '#8e44ad', '#16a085']) : ppick(PAL.pants), hair: ppick(PAL.hair), skin: ppick(PAL.skin), skirt, long: skirt && Math.random() < 0.7 },
+        x: L.street[0] + (Math.random() - 0.5) * 3, y: L.street[1] - i * 1.6, tx: 0, ty: 0, state: 'arrive', t: 0, wait: i * 1.4, ph: Math.random() * 6, beer: Math.random() < 0.6 };
+      [g.tx, g.ty] = spot(L, 'dance'); guests.push(g);
     }
-    p.party = { t0: performance.now(), guests, pig: 0, smoke: [], notes: [] };
+    let tempo = 1; try { tempo = +localStorage.getItem('izo-party-tempo') || 1; } catch {}
+    p.party = { t0: performance.now(), T: 0, tempo, phase: 'party', guests, extra: [], pig: 0, smoke: [], notes: [], tanker: null,
+                host: { x: 0, y: 0, tx: 0, ty: 0, say: null } };
   }
   function spot(L, kind) {
     if (kind === 'keg') return [L.keg[0] + 1.1, L.keg[1] - 0.6];
@@ -2353,40 +2359,105 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 3;
     return [L.dance[0] + Math.cos(a) * r, L.dance[1] + Math.sin(a) * r * 0.7];
   }
+  const say = (P, who, text, secs = 2.5) => { who.say = { text, until: P.T + secs }; };
+  const SPEED = { arrive: 1.3, go: 1.3, 'go-keg': 1.3, 'go-bush': 3.2, 'go-tanker': 3.4, flee: 3.6, home: 1.4, walk: 1.2 };
+  const DONE = { 'go-keg': 'tap', 'go-bush': 'vomit', arrive: 'dance', 'go-tanker': 'tdrink', flee: 'gone', home: 'gone' };
+  function moveActor(a, dt) {                                           // true = ještě jde
+    const v = SPEED[a.state]; if (!v) return false;
+    const dx = a.tx - a.x, dy = a.ty - a.y, dl = Math.hypot(dx, dy);
+    if (dl > 0.15) { a.x += dx / dl * Math.min(dl, v * dt); a.y += dy / dl * Math.min(dl, v * dt); return true; }
+    a.state = a.state === 'go' || a.state === 'walk' ? a.next : DONE[a.state]; a.t = 0;
+    a.dur = a.state === 'tap' ? 3 : a.state === 'vomit' ? 3.5 : 6 + Math.random() * 10;
+    return false;
+  }
   function stepParty(p, dt) {
-    const P = p.party, L = p.layout;
-    P.pig += dt;
+    const P = p.party, L = p.layout, H = P.host;
+    dt *= P.tempo; P.T += dt; P.pig += dt;
+    const everyone = () => P.guests.filter((g) => g.state !== 'gone' && g.wait <= 0);
+    // ---- scénář ----
+    if (P.phase === 'party' && P.T > T_TANKER && !P.tankerDone) {
+      P.phase = 'tanker'; P.tankerDone = true;
+      P.tanker = { x: L.tanker_stop - 70, beer: 1, state: 'arrive' };
+    }
+    const tk = P.tanker;
+    if (tk) {
+      if (tk.state === 'arrive') {
+        const rest = L.tanker_stop - tk.x; tk.x += Math.min(rest, Math.max(1.5, Math.min(9, rest * 0.8)) * dt);
+        if (rest < 0.05) {
+          tk.state = 'drink'; say(P, H, 'Radegast! Všichni k cisterně!', 3);
+          const g0 = everyone(), n = g0.length + 1;
+          g0.forEach((g, i) => { g.state = 'go-tanker'; g.tx = tk.x - 4 + 8 * (i + 0.5) / n; g.ty = streetY(L, g.tx) + 2.3 + Math.random() * 0.8; });
+          H.tx = tk.x + 4 - 8 / n / 2; H.ty = streetY(L, H.tx) + 2.4;
+        }
+      } else if (tk.state === 'drink') {
+        const drinking = P.guests.filter((g) => g.state === 'tdrink').length;
+        if (drinking >= 3) tk.beer = Math.max(0, tk.beer - dt / 16);
+        if (Math.random() < dt * 0.4 && drinking) say(P, ppick(P.guests.filter((g) => g.state === 'tdrink')), ppick(['Na zdraví!', 'Ještě jedno!', 'Dvanáctka!', 'Mňam!']), 1.8);
+        if (tk.beer <= 0) {
+          tk.state = 'leave'; P.phase = 'party'; say(P, H, 'Vypito do dna!', 2.5);
+          for (const g of everyone()) { g.state = 'go'; g.next = 'dance'; [g.tx, g.ty] = spot(L, 'dance'); g.beer = true; }
+          H.tx = 0; H.ty = 0;
+        }
+      } else if (tk.state === 'leave') { tk.x += Math.min(10, 1 + (tk.x - L.tanker_stop)) * dt; if (tk.x > L.tanker_stop + 60) P.tanker = null; }
+    }
+    if (P.phase === 'party' && P.T > T_STRIP && !P.stripDone) {
+      P.phase = 'strip'; P.stripDone = true;
+      for (let i = 0; i < 3; i++) P.extra.push({ kind: 'tanecnice', look: { shirt: ['#ff3fa4', '#b03bff', '#ffd23f'][i], pants: ['#ff3fa4', '#b03bff', '#ffd23f'][i], hair: ['#f2d16b', '#1e1a18', '#c0392b'][i], skin: ppick(PAL.skin), skirt: true, long: false, hairLong: true, boa: true },
+        x: L.street[0] - 2 + i * 1.5, y: L.street[1] - 1 - i, state: 'walk', next: 'dance', tx: L.dance[0] - 1.2 + i * 1.2, ty: L.dance[1], ph: i * 2, t: 0 });
+      for (const g of everyone()) { const a = Math.random() * Math.PI * 2; g.state = 'go'; g.next = 'cheer'; g.tx = L.dance[0] + Math.cos(a) * 3.2; g.ty = L.dance[1] + Math.sin(a) * 2.2; }
+      H.tx = L.dance[0] + 2.5; H.ty = L.dance[1] + 1.5;
+    }
+    if (P.phase === 'strip') {
+      if (Math.random() < dt * 0.9) say(P, ppick(everyone().length ? everyone() : [H]), ppick(['Jůůů!', 'Jéééé!', 'Bravo!', 'Hurá!']), 1.4);
+      if (P.T > T_WIVES) {
+        P.phase = 'wives';
+        for (let i = 0; i < 3; i++) P.extra.push({ kind: 'manzelka', look: { shirt: ['#7a4a8c', '#2e6b4a', '#8c3a3a'][i], pants: ['#3a3a5a', '#4a4a3a', '#2c3e50'][i], hair: ['#5a3b22', '#b8b8b8', '#1e1a18'][i], skin: ppick(PAL.skin), skirt: true, long: true, apron: true, pin: i === 0 },
+          x: L.door[0] - 0.6 + i * 0.6, y: L.door[1], state: 'walk', next: 'angry', tx: L.dance[0] - 1.5 + i * 1.5, ty: L.dance[1] + 2.4, ph: i, t: 0, wait: i * 0.5 });
+      }
+    }
+    if (P.phase === 'wives' && P.extra.some((e) => e.kind === 'manzelka' && e.state === 'angry')) {
+      P.phase = 'flee'; P.fleeT = P.T;
+      const w = P.extra.filter((e) => e.kind === 'manzelka');
+      say(P, w[0], 'KONEC PÁRTY!', 4); say(P, w[1], 'Domů, hned!', 4); say(P, H, 'Ale miláčku…', 4);
+    }
+    if (P.phase === 'flee' && P.T > P.fleeT + 1.5 && !P.fled) {
+      P.fled = true;
+      for (const g of [...everyone(), ...P.extra.filter((e) => e.kind === 'tanecnice')]) { g.state = 'flee'; g.tx = (Math.random() < 0.5 ? -1 : 1) * (22 + Math.random() * 8); g.ty = streetY(L, g.tx) - 0.5; g.beer = false; }
+      H.tx = 0; H.ty = 0;
+    }
+    if (P.phase === 'flee' && P.T > P.fleeT + 6 && !P.homeward) {
+      P.homeward = true;
+      for (const w of P.extra.filter((e) => e.kind === 'manzelka')) { w.state = 'home'; w.tx = L.door[0]; w.ty = L.door[1]; }
+    }
+    if (P.phase === 'flee' && P.homeward && P.extra.every((e) => e.state === 'gone') && P.guests.every((g) => g.state === 'gone' || g.wait > 0)) { p.party = null; return; }
+    // ---- pohyb ----
+    { const dx = H.tx - H.x, dy = H.ty - H.y, dl = Math.hypot(dx, dy); H.moving = dl > 0.15; if (H.moving) { H.x += dx / dl * Math.min(dl, 3 * dt); H.y += dy / dl * Math.min(dl, 3 * dt); } }
+    for (const e of P.extra) { e.t += dt; if (e.wait > 0) { e.wait -= dt; continue; } moveActor(e, dt); }
     for (const g of P.guests) {
       g.t += dt;
-      if (g.wait > 0) { g.wait -= dt; continue; }
-      const dx = g.tx - g.x, dy = g.ty - g.y, dl = Math.hypot(dx, dy);
-      const moving = g.state === 'arrive' || g.state === 'go-keg' || g.state === 'go-bush' || g.state === 'go';
-      if (moving) {
-        const v = g.state === 'go-bush' ? 3.2 : 1.3;
-        if (dl > 0.15) { g.x += dx / dl * Math.min(dl, v * dt); g.y += dy / dl * Math.min(dl, v * dt); g.dir = dx >= 0 ? 1 : -1; continue; }
-        g.state = { 'go-keg': 'tap', 'go-bush': 'vomit', arrive: 'dance', go: g.next }[g.state]; g.t = 0;
-        g.dur = g.state === 'tap' ? 3 : g.state === 'vomit' ? 3.5 : 6 + Math.random() * 10; continue;
-      }
-      if (g.t < g.dur) continue;
+      if (g.wait > 0) { g.wait -= dt; if (P.phase !== 'party' && P.phase !== 'tanker') { g.wait = 1e9; } continue; }
+      if (moveActor(g, dt)) continue;
+      if (P.phase !== 'party' || g.state === 'gone' || g.t < g.dur) continue;
       if (g.state === 'tap') g.beer = true;
       const r = Math.random();
-      const pt = (now) => performance.now() - P.t0 > now * 1000;
-      if (r < 0.06 && pt(25) && P.guests.every((q) => q.state !== 'vomit' && q.state !== 'go-bush')) { g.state = 'go-bush'; [g.tx, g.ty] = spot(L, 'bush'); g.beer = false; }
+      if (r < 0.06 && P.T > 25 && P.guests.every((q) => q.state !== 'vomit' && q.state !== 'go-bush')) { g.state = 'go-bush'; [g.tx, g.ty] = spot(L, 'bush'); g.beer = false; }
       else if (r < 0.32 && !g.beer || r < 0.12) { g.state = 'go-keg'; [g.tx, g.ty] = spot(L, 'keg'); }
       else if (r < 0.72) { g.state = 'go'; g.next = 'dance'; [g.tx, g.ty] = spot(L, 'dance'); }
       else { g.state = 'go'; g.next = 'drink'; [g.tx, g.ty] = spot(L, 'chat'); }
       g.t = 0;
     }
   }
-  // člověk 10 jednotek vysoký (1,8 m), kreslený po pixelech jako lyžaři; pose: stand walk drink dance vomit wave tap
+  // člověk 10 jednotek vysoký (1,8 m), kreslený po pixelech jako lyžaři; pose: stand walk run drink dance cheer vomit wave tap angry
   function drawPerson(X, Y, u, k, pose, t, o = {}) {
     const R = (cx, cy, w, hh, c) => { ctx.fillStyle = c; ctx.fillRect(X + cx * u, Y - cy * u, w * u, hh * u); };
     const dark = o.night > 0.6, D = (c) => dark ? shade(c, 0.62) : c;
     const SH = D(k.shirt), SH2 = D(shade(k.shirt, 0.78)), PA = D(k.pants), PA2 = D(shade(k.pants, 0.8)), SK = D(k.skin), HA = D(k.hair), OUTC = '#1b2233';
     const BEER = '#e0a526', FOAM = '#fffbe8';
     let bob = 0;
-    if (pose === 'dance') bob = Math.sin(t * 9) > 0 ? 1 : 0;
+    if (pose === 'dance' || pose === 'cheer') bob = Math.sin(t * (pose === 'cheer' ? 12 : 9)) > 0 ? 1 : 0;
+    if (pose === 'angry') bob = Math.sin(t * 16) > 0 ? 1 : 0;
     const Yb = Y; Y -= bob * u;
+    if (k.boa && pose === 'dance') X += (Math.sin(t * 6) > 0 ? 1 : -1) * Math.max(1, Math.round(u / 2));   // tanečnice vlní boky
     ctx.fillStyle = 'rgba(20,26,40,0.32)'; ctx.fillRect(X - 3 * u, Yb - Math.max(1, Math.round(u / 2)), 6 * u, Math.max(1, Math.round(u / 2)) + u / 2);
     if (pose === 'vomit') {                                             // předklon u keře
       R(-2, 1, 2, 1, OUTC); R(0, 1, 2, 1, OUTC); R(-2, 4, 2, 3, PA); R(0, 4, 2, 3, PA2);
@@ -2397,22 +2468,81 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
       R(2, 1, 3, 1, '#8fb339');                                        // loužička
       return;
     }
-    const step = pose === 'walk' ? (Math.sin(t * 10) > 0 ? 1 : -1) : 0;
-    R(-2 + (step > 0 ? -0 : 0), 1, 2, 1, OUTC); R(0, 1, 2, 1, OUTC);
-    if (k.skirt) { R(-2, 5, 4, k.long ? 3 : 2, PA); R(1, 5, 1, k.long ? 3 : 2, PA2); if (!k.long) { R(-1, 3, 1, 2, SK); R(0, 3, 1, 2, SK); } }
+    const step = pose === 'walk' || pose === 'run' ? (Math.sin(t * (pose === 'run' ? 18 : 10)) > 0 ? 1 : -1) : 0;
+    R(-2, 1, 2, 1, k.boa ? '#d4145a' : OUTC); R(0, 1, 2, 1, k.boa ? '#d4145a' : OUTC);
+    if (k.skirt) {
+      R(-2, 5, 4, k.long ? 3 : 2, PA); R(1, 5, 1, k.long ? 3 : 2, PA2);
+      if (!k.long) { R(-1, 3, 1, 2, SK); R(0, 3, 1, 2, SK); }
+      if (k.apron) R(-1, 6, 2, 4, D('#f4f1e8'));
+    }
     else if (step) { R(-2, 4, 2, 3 - (step > 0 ? 1 : 0), PA); R(0, 4, 2, 3 - (step < 0 ? 1 : 0), PA2); }
     else { R(-2, 4, 2, 3, PA); R(0, 4, 2, 3, PA2); }
     R(-2, 8, 4, 4, SH); R(1, 8, 1, 4, SH2);
-    R(-1, 10, 2, 2, SK); R(-1, 10, 2, 1, HA); if (k.long) R(-2, 10, 1, 3, HA);
+    if (k.boa) {                                                        // třpytivé šaty a boa
+      if (Math.floor(t * 6) % 2) R(-1, 7, 1, 1, '#fff6c0'); else R(0, 6, 1, 1, '#fff6c0');
+      R(-3, 8, 6, 1, '#ff8ad8'); R(-3, 7, 1, 1, '#ff8ad8'); R(2, 7, 1, 1, '#ff8ad8');
+    }
+    R(-1, 10, 2, 2, SK); R(-1, 10, 2, 1, HA); if (k.long || k.hairLong) R(-2, 10, 1, 3, HA); if (k.hairLong) R(1, 10, 1, 3, HA);
+    if (k.apron) R(-1, 11, 2, 1, D(shade(k.hair, 1.1)));                // drdol
     // ruce
     const beerAt = (cx, cy) => { R(cx, cy, 2, 2, BEER); R(cx, cy + 1, 2, 1, FOAM); };
     if (pose === 'wave') { const wig = Math.sin(t * 14) > 0 ? -1 : 0; R(-3, 10, 1, 3, SH); R(-3 + wig, 11, 1, 1, SK); }
+    else if (pose === 'cheer') { R(-3, 11, 1, 3, SH); R(-3, 12, 1, 1, SK); }
     else if (pose === 'dance') { const up = Math.sin(t * 4.5 + o.ph) > 0; R(-3, up ? 11 : 8, 1, 3, SH); R(-3, up ? 12 : 5, 1, 1, SK); }
+    else if (pose === 'angry') { R(-3, 8, 1, 2, SH); R(-2, 7, 1, 1, SK); }   // ruka v bok
+    else if (pose === 'run') { const sw = step > 0; R(-3, sw ? 9 : 8, 1, 2, SH); R(-3, sw ? 7 : 6, 1, 1, SK); }
     else { R(-3, 8, 1, 3, SH); R(-3, 5, 1, 1, SK); }
     if (pose === 'drink') { R(2, 8, 1, 2, SH2); beerAt(1, 9); }
     else if (pose === 'tap') { R(2, 8, 2, 1, SH2); if (Math.floor(t * 2) % 2) beerAt(3, 7); }
+    else if (pose === 'cheer') { R(2, 11, 1, 3, SH2); if (o.beer) beerAt(2, 13); else R(2, 12, 1, 1, SK); }
     else if (pose === 'dance') { const up = Math.sin(t * 4.5 + o.ph + 1.6) > 0; R(2, up ? 11 : 8, 1, 3, SH2); if (o.beer) beerAt(2, up ? 13 : 6); else R(2, up ? 12 : 5, 1, 1, SK); }
+    else if (pose === 'angry') {                                        // zdvižená ruka (s válečkem) hrozí
+      const sh = Math.sin(t * 14) > 0 ? 1 : 0;
+      R(2, 11, 1, 3, SH2); R(2, 12, 1, 1, SK);
+      if (k.pin) { R(1 + sh, 15, 3, 1, D('#c8a070')); R(1 + sh, 15, 1, 1, D('#8a6a40')); R(3 + sh, 15, 1, 1, D('#8a6a40')); }
+    }
     else { R(2, 8, 1, 3, SH2); if (o.beer) { beerAt(2, 6); R(4, 6, 1, 1, '#c98f1a'); } else R(2, 5, 1, 1, SK); }
+  }
+  function drawBubble(X, Ytop, text, fs, loud) {
+    const OUTC = '#1b2233';
+    ctx.font = `${loud ? 800 : 600} ${fs}px ${DISPLAY_FONT}`;
+    const tw = ctx.measureText(text).width, bw = tw + 14, bh = fs + 8, bx = Math.round(X - bw / 2), by = Math.round(Ytop - bh - 7);
+    ctx.fillStyle = loud ? '#ffe9e4' : '#fffdf6'; ctx.strokeStyle = loud ? '#b3261e' : OUTC; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X - 4, by + bh - 1); ctx.lineTo(X, by + bh + 6); ctx.lineTo(X + 4, by + bh - 1); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(X - 4, by + bh); ctx.lineTo(X, by + bh + 6); ctx.lineTo(X + 4, by + bh); ctx.stroke();
+    ctx.fillStyle = loud ? '#b3261e' : OUTC; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, X, by + bh / 2 + 1); ctx.textAlign = 'start';
+  }
+  function drawTanker(p, S, u, now) {
+    const P = p.party, L = p.layout, tk = P.tanker, [x0, y0, x1, y1] = L.ulice, dl = Math.hypot(x1 - x0, y1 - y0);
+    const ex = (x1 - x0) / dl, ey = (y1 - y0) / dl, nx = -ey, ny = ex;            // osa silnice a kolmice (na sever)
+    const cx = tk.x, cy = streetY(L, tk.x) - 0.3;
+    const W = (a, b, z) => S(cx + a * ex + b * nx, cy + a * ey + b * ny, z);       // a podél, b napříč, z výška
+    const poly = (pts, c) => { ctx.fillStyle = c; ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#1b2233'; ctx.lineWidth = Math.max(1, u * 0.35); ctx.stroke(); };
+    const box = (a0, a1, b0, b1, z0, z1, top, front, side, back) => {
+      if (back) poly([W(a1, b0, z0), W(a1, b1, z0), W(a1, b1, z1), W(a1, b0, z1)], back);   // čelo vpravo (když je vidět)
+      poly([W(a0, b0, z0), W(a1, b0, z0), W(a1, b0, z1), W(a0, b0, z1)], front);           // bok k divákovi (jih)
+      poly([W(a0, b0, z0), W(a0, b1, z0), W(a0, b1, z1), W(a0, b0, z1)], side);            // záď (západ)
+      poly([W(a0, b0, z1), W(a1, b0, z1), W(a1, b1, z1), W(a0, b1, z1)], top);
+    };
+    box(-4.6, 4.6, -1.15, 1.15, 0.5, 0.95, '#2a2d33', '#24272c', '#1d1f23');             // podvozek
+    box(-4.5, 2.2, -1.2, 1.2, 0.95, 3.1, '#f7f7f2', '#e6e3d8', '#cfcabb');               // nádrž
+    box(-4.5, 2.2, -1.21, 1.21, 1.8, 2.2, '#2f8a3a', '#26742f', '#1f5f27');              // zelený pruh
+    box(2.4, 4.6, -1.2, 1.2, 0.95, 3.0, '#c8262b', '#b01f24', '#8f191d', '#a31d22');     // kabina
+    const [gx, gy] = W(4.0, -1.2, 2.3), [gx2, gy2] = W(3.0, -1.2, 2.3);                  // okno kabiny
+    ctx.fillStyle = '#8fc3e8'; ctx.fillRect(Math.min(gx, gx2), Math.min(gy, gy2) - u * 0.6, Math.abs(gx - gx2), u * 1.4);
+    for (const a of [-3.5, -2.2, 3.6]) { const [wx, wy] = W(a, -1.2, 0.45); ctx.fillStyle = '#16181c'; ctx.fillRect(wx - u * 1.3, wy - u * 1.3, u * 2.6, u * 2.6); ctx.fillStyle = '#9aa0a8'; ctx.fillRect(wx - u * 0.4, wy - u * 0.4, u * 0.8, u * 0.8); }
+    // nápis na boku nádrže, zkosený podél osy
+    const [ax, ay] = W(-1.15, -1.2, 2.55), [bx, by] = W(0.15, -1.2, 2.55), ang = Math.atan2(by - ay, bx - ax);
+    const fs = Math.max(7, Math.round(u * 2.2));
+    ctx.save(); ctx.translate(ax, ay); ctx.transform(1, Math.tan(ang), 0, 1, 0, 0);
+    ctx.font = `800 ${fs}px ${DISPLAY_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#c8262b'; ctx.fillText('RADEGAST 12°', 0, 0); ctx.restore(); ctx.textAlign = 'start';
+    // ukazatel piva
+    if (tk.state === 'drink' || tk.state === 'leave') {
+      const [tx, ty] = W(-1.2, 0, 3.4);
+      drawBubble(tx, ty, tk.beer > 0 ? `Zbývá ${Math.ceil(tk.beer * 100) * 100} l` : 'PRÁZDNO', Math.max(10, Math.round(u * 2.6)), tk.beer <= 0);
+    }
   }
   function drawProps(p, S, u, now, night, items) {
     const P = p.party, L = p.layout, t = now / 1000;
@@ -2446,8 +2576,10 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
       const [X, Y] = S(...L.speaker);
       box(X - 1.5 * u, Y - 4 * u, 3 * u, 4 * u, '#22262d'); box(X - 0.8 * u, Y - 3.4 * u, 1.6 * u, 1.4 * u, '#555c66');
       const pulse = Math.sin(t * 9) > 0 ? 1 : 0.7; box(X - 0.6 * u * pulse, Y - 1.6 * u, 1.2 * u * pulse, 1.2 * u * pulse, '#7d8590');
-      if (Math.random() < 0.05) P.notes.push({ x: X, y: Y - 4 * u, a: 0, s: Math.random() < 0.5 ? '♪' : '♫', dx: (Math.random() - 0.5) * 2 });
+      if (P.phase !== 'flee' && Math.random() < 0.05) P.notes.push({ x: X, y: Y - 4 * u, a: 0, s: Math.random() < 0.5 ? '♪' : '♫', dx: (Math.random() - 0.5) * 2 });
     } });
+    // cisterna na ulici
+    if (P.tanker) items.push({ d: S.d(P.tanker.x, streetY(L, P.tanker.x)), f: () => drawTanker(p, S, u, now) });
     // řetěz žárovek nad zahradou (2,6 m nad zemí)
     items.push({ d: -1e9, f: () => {
       const pts = L.lights.map(([a, b]) => S(a, b, 2.6)), cols = ['#ff5a5a', '#ffd23f', '#5ad1ff', '#7dff6a', '#ff8af2'];
@@ -2457,7 +2589,7 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
         const [a, b] = pts[i], [c, e] = pts[(i + 1) % pts.length];
         ctx.beginPath(); ctx.moveTo(a, b); ctx.quadraticCurveTo((a + c) / 2, (b + e) / 2 + 2 * u, c, e); ctx.stroke();
         for (let j = 1; j < 7; j++) {
-          const q = j / 7, x = a + (c - a) * q, y = b + (e - b) * q + 4 * u * q * (1 - q) * 2 - u * 0.0;
+          const q = j / 7, x = a + (c - a) * q, y = b + (e - b) * q + 4 * u * q * (1 - q) * 2;
           const on = (Math.floor(t * 2) + j + i) % 3 !== 0, col = cols[(j + i) % cols.length];
           if (night > 0.3 && on) { ctx.fillStyle = col + '55'; ctx.fillRect(x - 1.5 * u, y - 1 * u, 3 * u, 3 * u); }
           ctx.fillStyle = on ? col : shade(col, 0.5); ctx.fillRect(x - u * 0.5, y, u, u);
@@ -2492,43 +2624,49 @@ dialog.help ol.vd-list { margin: 0; padding-left: 22px; } ol.vd-list li { margin
     if (sx < 0.3) return;
     for (const p of POSTAVY.list) {
       const top = toImg(p.x, p.y, p.h + 1.8), base = (p.iy - top[1]) * sx / 10;
-      const X = Math.round(ox + p.ix * sx), Y = Math.round(oy + p.iy * sx);
-      if (X < -400 || Y < -400 || X > fx.clientWidth + 400 || Y > fx.clientHeight + 500) continue;
+      const X0 = Math.round(ox + p.ix * sx), Y0 = Math.round(oy + p.iy * sx);
+      if (X0 < -600 || Y0 < -600 || X0 > fx.clientWidth + 600 || Y0 > fx.clientHeight + 700) continue;
+      const P = p.party, t = now / 1000, cyc = ((t + p.ph) % 6);
       const tw = (now - p.wave) / 1000;                                   // čas od kliknutí v sekundách
       const ease = (a) => a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
       const grow = tw < 0 || tw > 4.2 ? 0 : tw < 0.6 ? ease(tw / 0.6) : tw < 3.6 ? 1 : 1 - ease((tw - 3.6) / 0.6);
       const waving = tw > 0.4 && tw < 3.6;
       const u0 = Math.max(1, Math.round(base)), u = Math.max(1, Math.round(base * (1 + 1.6 * grow)));
-      const items = [];
+      const items = [], talk = [];
       // S(dx, dy, dz): obrazovka bodu v metrech od postavičky; S.d hloubka pro řazení (vzdálenější dřív)
       const S = (dx, dy, dz = 0) => { const x = p.x + dx, y = p.y + dy, h = gz(x, y) + dz, q = toImg(x, y, h); return [Math.round(ox + q[0] * sx), Math.round(oy + q[1] * sx)]; };
       S.d = (dx, dy) => depth(p.x + dx, p.y + dy, gz(p.x + dx, p.y + dy));
       S.h26 = Math.round((S(0, 0)[1] - S(0, 0, 2.6)[1]));
-      const t = now / 1000, cyc = ((t + p.ph) % 6);
-      const hostPose = waving ? 'wave' : p.party && Math.sin(t * 0.4 + p.ph) > 0.3 ? 'dance' : cyc > 4.2 && cyc < 5.5 ? 'drink' : 'stand';
-      if (!occluded(p.ix, p.iy, p.d)) items.push({ d: p.d, f: () => drawPerson(X, Y, u, { shirt: '#c0392b', pants: '#3b5b8c', hair: '#5a3b22', skin: '#e8c6a4' }, hostPose, t, { night, beer: true, ph: p.ph }) });
-      if (p.party) {
+      const H = P ? P.host : { x: 0, y: 0 };
+      const [X, Y] = P ? S(H.x, H.y) : [X0, Y0];
+      let hostPose = waving ? 'wave' : cyc > 4.2 && cyc < 5.5 ? 'drink' : 'stand';
+      if (P && !waving) {
+        if (H.moving) hostPose = P.phase === 'tanker' ? 'run' : 'walk';
+        else if (P.phase === 'tanker' && P.tanker?.state === 'drink') hostPose = 'drink';
+        else if (P.phase === 'strip') hostPose = 'cheer';
+        else if (P.phase === 'wives' || P.phase === 'flee') hostPose = 'stand';
+        else if (Math.sin(t * 0.4 + p.ph) > 0.3) hostPose = 'dance';
+      }
+      const hd = P ? S.d(H.x, H.y) : p.d;
+      if (P || !occluded(p.ix, p.iy, p.d)) items.push({ d: hd, f: () => drawPerson(X, Y, u, { shirt: '#c0392b', pants: '#3b5b8c', hair: '#5a3b22', skin: '#e8c6a4' }, hostPose, t, { night, beer: P?.phase !== 'flee', ph: p.ph }) });
+      if (P) {
+        if (H.say && H.say.until > P.T) talk.push([X, Y - 12 * u, H.say.text, H.say.text.includes('!') && H.say.text === H.say.text.toUpperCase()]);
         drawProps(p, S, u0, now, night, items);
-        for (const g of p.party.guests) {
-          if (g.wait > 0) continue;
+        const POSE = { arrive: 'walk', 'go-keg': 'walk', 'go-bush': 'run', go: 'walk', walk: 'walk', home: 'walk', 'go-tanker': 'run', flee: 'run',
+                       tap: 'tap', vomit: 'vomit', dance: 'dance', cheer: 'cheer', tdrink: 'drink', angry: 'angry' };
+        for (const g of [...P.guests, ...P.extra]) {
+          if (g.wait > 0 || g.state === 'gone') continue;
           const [gX, gY] = S(g.x, g.y);
-          const pose = { arrive: 'walk', 'go-keg': 'walk', 'go-bush': 'walk', go: 'walk', tap: 'tap', vomit: 'vomit', dance: 'dance', drink: Math.sin(t * 0.8 + g.ph) > 0.6 ? 'drink' : 'stand' }[g.state];
+          const pose = g.state === 'drink' ? (Math.sin(t * 0.8 + g.ph) > 0.6 ? 'drink' : 'stand') : POSE[g.state] || 'stand';
           items.push({ d: S.d(g.x, g.y), f: () => drawPerson(gX, gY, u0, g.look, pose, t + g.ph, { night, beer: g.beer, ph: g.ph }) });
+          if (g.say && g.say.until > P.T) talk.push([gX, gY - 12 * u0, g.say.text, g.say.text === g.say.text.toUpperCase()]);
         }
       }
       items.sort((a, b) => b.d - a.d);
       for (const it of items) it.f();
-      if (p.party) drawPartyFx(p, u0, dt);
-      if (waving && p.text) {                                             // bublina s textem
-        const OUTC = '#1b2233', fs = Math.max(11, Math.round(u * 3.2));
-        ctx.font = `600 ${fs}px ${DISPLAY_FONT}`;
-        const tw2 = ctx.measureText(p.text).width, bx = X - tw2 / 2 - 8, by = Y - 14 * u - fs - 10, bw = tw2 + 16, bh = fs + 10;
-        ctx.fillStyle = '#fffdf6'; ctx.strokeStyle = OUTC; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(X - 5, by + bh - 1); ctx.lineTo(X, by + bh + 7); ctx.lineTo(X + 5, by + bh - 1); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(X - 5, by + bh); ctx.lineTo(X, by + bh + 7); ctx.lineTo(X + 5, by + bh); ctx.stroke();
-        ctx.fillStyle = OUTC; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(p.text, X, by + bh / 2 + 1); ctx.textAlign = 'start';
-      }
+      if (P) drawPartyFx(p, u0, dt);
+      for (const [bx, by, text, loud] of talk) drawBubble(bx, by, text, Math.max(10, Math.round(u0 * 2.6)), loud);
+      if (waving && p.text) drawBubble(X, Y - 14 * u, p.text, Math.max(11, Math.round(u * 3.2)));
       POSTAVY.drawn.push([X, Y, p, 12 * u]);
     }
   }
